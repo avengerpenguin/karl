@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+dynamic = ["version"]
+name = "karl"
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "llama-cpp-python",
+    "langchain-mcp-adapters",
+    "typer",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-pikachu",
+    "pytest-asyncio",
+]
+
+[tool.pytest]
+addopts = ["--pikachu"]
+testpaths = ["tests"]
