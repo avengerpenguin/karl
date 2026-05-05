@@ -27,12 +27,16 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
 
         messages.append(HumanMessage(content=new_message))
 
-        async for chunk in agent.astream({"messages": messages}, stream_mode="updates", version="v2"):
+        async for chunk in agent.astream(
+                {"messages": messages},
+                stream_mode="updates",
+                version="v2",
+        ):
             if chunk["type"] == "updates":
                 for step, data in chunk["data"].items():
                     panel_title, panel_colour = _create_panel_title(step)
 
-                    if data:
+                    if data and 'messages' in data:
                         messages.append(data['messages'][-1])
                         blocks = data['messages'][-1].content_blocks
                         for block in blocks:
@@ -55,7 +59,7 @@ def _create_panel_title(step):
         "model": ("Karl", "red"),
         "tools": ("Data", "white"),
         "SummarizationMiddleware.before_model": ("Karl's inner monologue", "yellow"),
-    }.get(step, (f"Unknown: {step}", "gray"))
+    }.get(step, (f"Unknown: {step}", "grey0"))
 
 
 def _generate_panel_text(step: str, block: dict) -> str:

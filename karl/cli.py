@@ -3,8 +3,9 @@ from functools import wraps
 
 import typer
 
-from . import agent, runner
+from . import runner
 from .agents.linkedin import create as create_linkedin_agent
+from .agents.email_agent import create as create_email_agent
 from .job import review_job_ad
 
 
@@ -22,8 +23,8 @@ async def job(url: str, model: str = DEFAULT_MODEL):
 
 @app.command()
 @syncify
-async def email(message: str):
-    await agent.run(message)
+async def email(message: str, model: str = DEFAULT_MODEL):
+    await runner.run(create_email_agent(model), message, memory_path="email_memory.yaml")
 
 
 @app.command()
