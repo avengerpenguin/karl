@@ -1,0 +1,211 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate, zstd
+      Connection:
+      - keep-alive
+      Host:
+      - localhost:23373
+      User-Agent:
+      - AsyncBeeperDesktop/Python 4.3.0
+      X-Stainless-Arch:
+      - arm64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - MacOS
+      X-Stainless-Package-Version:
+      - 4.3.0
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.14.4
+      x-stainless-read-timeout:
+      - '30'
+    method: GET
+    uri: http://localhost:23373/v1/chats?accountIDs=linkedin
+  response:
+    body:
+      string: |-
+        {
+          "items": [
+            {
+              "id": "!1:beeper.local",
+              "localChatID": "!1:beeper.local",
+              "accountID": "linkedin",
+              "title": "LinkedIn",
+              "type": "single",
+              "participants": {
+                "items": [
+                  {
+                    "id": "@linkedin_1337:beeper.local",
+                    "username": "1337",
+                    "fullName": "LinkedIn",
+                    "cannotMessage": false,
+                    "isSelf": false
+                  },
+                  {
+                    "id": "@me:beeper.com",
+                    "cannotMessage": false,
+                    "isSelf": true
+                  }
+                ]
+              },
+              "isArchived": true
+            },
+            {
+              "id": "!2:beeper.local",
+              "localChatID": "!2:beeper.local",
+              "accountID": "linkedin",
+              "title": "Bob Recruiter",
+              "type": "single",
+              "participants": {
+                "items": [
+                  {
+                    "id": "@linkedin__bob:beeper.local",
+                    "username": "bob",
+                    "fullName": "Bob Recruiter",
+                    "cannotMessage": false,
+                    "isSelf": false
+                  },
+                  {
+                    "id": "@me:beeper.com",
+                    "cannotMessage": false,
+                    "isSelf": true
+                  }
+                ]
+              },
+              "isArchived": false
+            },
+            {
+              "id": "!3:beeper.local",
+              "localChatID": "!3:beeper.local",
+              "accountID": "linkedin",
+              "title": "Alice Hirer",
+              "type": "single",
+              "participants": {
+                "items": [
+                  {
+                    "id": "@linkedin__alice:beeper.local",
+                    "username": "alice",
+                    "fullName": "Alice Hirer",
+                    "cannotMessage": false,
+                    "isSelf": false
+                  },
+                  {
+                    "id": "@me:beeper.com",
+                    "cannotMessage": false,
+                    "isSelf": true
+                  }
+                ]
+              },
+              "isArchived": false
+            }
+          ],
+          "hasMore": false,
+          "oldestCursor": "1766208351564",
+          "newestCursor": "1777750227272"
+        }
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '50990'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 04 May 2026 23:43:08 GMT
+      ETag:
+      - W/"c72e-SacSYOU2IOwfOMiS0Vr0v3VWH1M"
+      Keep-Alive:
+      - timeout=5
+      X-Beeper-Desktop-Version:
+      - 4.2.785
+      X-Powered-By:
+      - Express
+    status:
+      code: 200
+      message: OK
+- request:
+    body: ''
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate, zstd
+      Connection:
+      - keep-alive
+      Host:
+      - localhost:23373
+      User-Agent:
+      - AsyncBeeperDesktop/Python 4.3.0
+      X-Stainless-Arch:
+      - arm64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - MacOS
+      X-Stainless-Package-Version:
+      - 4.3.0
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.14.4
+      x-stainless-read-timeout:
+      - '30'
+    method: GET
+    uri: http://localhost:23373/v1/chats/!2:beeper.local/messages
+  response:
+    body:
+      string: |-
+        {
+          "items": [
+            {
+              "id": "2",
+              "chatID": "!2:beeper.local",
+              "accountID": "linkedin",
+              "senderID": "@linkedin__bob:beeper.local",
+              "senderName": "Bob Recruiter",
+              "timestamp": "2026-04-30T13:48:44.699Z",
+              "sortKey": "9514",
+              "type": "TEXT",
+              "text": "Hi,\n\nI have a great opportunity for you.\n\nAre you free for a call to discuss more?\n\nBob Recruiter\n",
+              "isSender": false,
+              "isUnread": false
+            }
+          ],
+          "hasMore": false
+        }
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '1550'
+      Content-Type:
+      - application/json; charset=utf-8
+      Date:
+      - Mon, 04 May 2026 23:46:26 GMT
+      ETag:
+      - W/"60e-uzYAz7VLsXmNupyGQgaJJ5xnmZo"
+      Keep-Alive:
+      - timeout=5
+      X-Beeper-Desktop-Version:
+      - 4.2.785
+      X-Powered-By:
+      - Express
+    status:
+      code: 200
+      message: OK
+version: 1

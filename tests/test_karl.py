@@ -20,11 +20,6 @@ async def test_response():
         1. Favour oldest messages to clear the backlog
         2. Advise messages that are time-wasting and can be archived within Beeper
         3. Flag messages that look like real job opportunities and suggest replies to send
-        
-        The user is a principal/staff level software engineer striving for distinguished or
-        fellow level eventually. They are looking for salaries no less than £150k so a key
-        challenge is rebuffing time-wasting messages for lower salaries or indeed cold messages
-        with no salary to which we can politely reply with our expectations and leave it at that.
         """)),
         HumanMessage(dedent("""\
         Find the oldest LinkedIn direct message I've not replied to.
