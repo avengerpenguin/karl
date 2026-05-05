@@ -1,71 +1,22 @@
 import os
-from textwrap import dedent
 
 import yaml
-from langchain.agents import create_agent
-from langchain.agents.middleware import ContextEditingMiddleware, SummarizationMiddleware, ClearToolUsesEdit
-from langchain_core.messages import BaseMessage, messages_from_dict, SystemMessage, HumanMessage, messages_to_dict
+from langchain_core.messages import BaseMessage, messages_from_dict, HumanMessage, messages_to_dict
 from langchain_core.runnables import Runnable
-from langchain_ollama import ChatOllama
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from .tools.cv import fetch_cv
-from .tools.email_tools import search_emails, list_folders, fetch_email
 
-tools = [
-    list_folders,
-    search_emails,
-    fetch_email,
-    fetch_cv,
-]
-
-llm = ChatOllama(model="qwen3:14b")
-agent: Runnable = create_agent(
-    llm,
-    tools=tools,
-    middleware=[
-        ContextEditingMiddleware(
-            edits=[
-                ClearToolUsesEdit(
-                    trigger=100000,
-                    keep=3,
-                ),
-            ],
-        ),
-        SummarizationMiddleware(
-            model=llm,
-            trigger=("tokens", 4000),
-            keep=("messages", 20),
-        ),
-    ],
-)
-
-
-
-async def run(message: str):
+async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
     console = Console()
 
-    memory_file = os.path.join(os.getcwd(), "memory.yaml")
+    memory_file = os.path.join(os.getcwd(), memory_path)
     if os.path.exists(memory_file):
         with open(memory_file, "r") as f:
             messages: list[BaseMessage] = messages_from_dict(yaml.load(f, Loader=yaml.FullLoader) or [])
     else:
-        messages: list[BaseMessage] = [
-            SystemMessage(content=dedent("""\
-            You Karl, an AI email assistant.
-            You are a personal assistant focused on managing the user's various inboxes, helping them sift through
-            the noise and find the most important actions to take.
-            You are careful to understand the user's workflows and needs before presuming things, but
-            when you are clear you can suggest actions to act on emails, archive ones that need no action and to flag
-            spam as spam.
-            You learn from past actions to inform things about the user's needs and workflows.
-            At times, you look for patterns in the user's email and suggest long-term actions based on them.
-            Be proactive at checking the user's emails when answering each question so you have full context. Do not
-            necessarily wait for the user to ask you to do any email lookups.
-            """)),
-        ]
+        messages: list[BaseMessage] = []
 
     new_message = message
 

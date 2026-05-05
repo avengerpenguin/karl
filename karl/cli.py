@@ -1,12 +1,14 @@
+import asyncio
 from functools import wraps
 
-import asyncio
 import typer
-from langchain.agents import create_agent
-from . import agent
+
+from . import agent, runner
+from .agents.linkedin import create as create_linkedin_agent
 from .job import review_job_ad
 
-DEFAULT_MODEL = "gemma4:latest"
+
+DEFAULT_MODEL = "ollama:gemma4:latest"
 
 syncify = lambda f: wraps(f)(lambda *args, **kwargs: asyncio.run(f(*args, **kwargs)))
 app = typer.Typer()
@@ -20,5 +22,11 @@ async def job(url: str, model: str = DEFAULT_MODEL):
 
 @app.command()
 @syncify
-async def email(message: str, model: str = DEFAULT_MODEL, interactive: bool = False):
+async def email(message: str):
     await agent.run(message)
+
+
+@app.command()
+@syncify
+async def linkedin(message: str, model: str = DEFAULT_MODEL):
+    await runner.run(create_linkedin_agent(model), message, memory_path="linkedin_memory_6.yaml")
