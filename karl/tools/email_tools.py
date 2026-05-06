@@ -5,7 +5,10 @@ from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 
-from imapclient import IMAPClient
+try:
+    from imapclient import IMAPClient
+except ImportError:
+    raise ImportError("Please install karl[imap] to use Email tools")
 
 import os
 from imapclient.exceptions import InvalidCriteriaError, IMAPClientError

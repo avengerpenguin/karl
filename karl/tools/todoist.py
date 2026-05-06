@@ -3,7 +3,11 @@ from datetime import datetime
 
 from langchain.tools import tool
 from pydantic import BaseModel
-from todoist_api_python.api import TodoistAPI
+try:
+    from todoist_api_python.api import TodoistAPI
+except ImportError:
+    raise ImportError("Please install karl[todoist] to use Todoist tools")
+
 
 
 class TodoistProject(BaseModel):

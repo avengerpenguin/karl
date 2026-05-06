@@ -7,15 +7,18 @@ dynamic = ["version"]
 name = "karl"
 dependencies = [
     "langchain >= 1.0.0",
-    "langchain-ollama",
     "langchain-mcp-adapters",
     "typer",
     "rich",
-    "imapclient",
-    "beeper_desktop_api",
+    "pypdf",
+    "langchain-ollama",
+    "langchain-openai",
 ]
 
 [project.optional-dependencies]
+imap = ["imapclient"]
+beeper = ["beeper_desktop_api"]
+todoist = ["todoist_api_python"]
 test = [
     "pytest",
     "pytest-pikachu",

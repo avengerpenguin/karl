@@ -2,8 +2,11 @@ import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator
 
-from beeper_desktop_api import AsyncBeeperDesktop
-from beeper_desktop_api.types import Message
+try:
+    from beeper_desktop_api import AsyncBeeperDesktop
+    from beeper_desktop_api.types import Message
+except ImportError:
+    raise ImportError("Please install karl[beeper] to use LinkedIn tools")
 from langchain_core.tools import tool
 from pydantic import BaseModel
 
