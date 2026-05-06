@@ -6,6 +6,7 @@ import typer
 from . import runner
 from .agents.linkedin import create as create_linkedin_agent
 from .agents.email_agent import create as create_email_agent
+from .agents.todo import create as create_todo_agent
 from .job import review_job_ad
 
 
@@ -31,3 +32,9 @@ async def email(message: str, model: str = DEFAULT_MODEL):
 @syncify
 async def linkedin(message: str, model: str = DEFAULT_MODEL):
     await runner.run(create_linkedin_agent(model), message, memory_path="linkedin_memory_6.yaml")
+
+
+@app.command()
+@syncify
+async def todo(message: str, model: str = DEFAULT_MODEL):
+    await runner.run(await create_todo_agent(model), message, memory_path="todo_memory.yaml")

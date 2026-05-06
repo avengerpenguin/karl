@@ -2,7 +2,6 @@ from textwrap import dedent
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolRetryMiddleware
-from langgraph.checkpoint.memory import InMemorySaver
 
 from ..tools.cv import fetch_cv
 from ..tools.email_tools import search_emails, list_folders, fetch_email
