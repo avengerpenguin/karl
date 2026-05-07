@@ -19,6 +19,7 @@ dependencies = [
 imap = ["imapclient"]
 beeper = ["beeper_desktop_api"]
 todoist = ["todoist_api_python"]
+gitlab = ["python-gitlab"]
 test = [
     "pytest",
     "pytest-pikachu",
