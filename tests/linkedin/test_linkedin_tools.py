@@ -1,6 +1,10 @@
 import pytest
 
-from linkedin.tools import find_latest_non_replied_chat, LinkedInChat, find_past_reply_examples
+from karl.linkedin.tools import (
+    find_latest_non_replied_chat,
+    LinkedInChat,
+    find_past_reply_examples,
+)
 
 
 pytestmark = [pytest.mark.vcr(ignore_localhost=False)]
@@ -23,7 +27,7 @@ async def test_find_past_reply_examples():
 
     assert examples is not None
 
-    first_chat =  examples[0]
+    first_chat = examples[0]
 
     assert first_chat.messages[0].sender == "recruiter"
     assert "Alice Hirer" in first_chat.messages[0].content
