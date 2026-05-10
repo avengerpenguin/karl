@@ -1,8 +1,6 @@
-import os
-
 import pytest
 
-from karl.tools.linkedin import find_latest_non_replied_chat, LinkedInChat, find_past_reply_examples
+from linkedin.tools import find_latest_non_replied_chat, LinkedInChat, find_past_reply_examples
 
 
 pytestmark = [pytest.mark.vcr(ignore_localhost=False)]

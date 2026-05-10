@@ -1,13 +1,11 @@
 import re
-from functools import wraps
 from html import unescape
 
-import asyncio
 import httpx
-import typer
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessageChunk
 from langchain_ollama import ChatOllama
+
 from . import _render_message_chunk, _render_completed_message
 
 CV_URL = "https://rossfenning.co.uk/cv.pdf"

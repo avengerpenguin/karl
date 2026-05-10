@@ -3,8 +3,7 @@ from textwrap import dedent
 from langchain.agents import create_agent
 from langchain.agents.middleware import ToolRetryMiddleware
 
-from ..tools.cv import fetch_cv
-from ..tools.email_tools import search_emails, list_folders, fetch_email
+from .tools import search_emails, list_folders, fetch_email
 
 
 def create(model="ollama:qwen3:14b"):
@@ -14,7 +13,6 @@ def create(model="ollama:qwen3:14b"):
             list_folders,
             search_emails,
             fetch_email,
-            fetch_cv,
         ],
         system_prompt=dedent("""\
             You Karl, an AI email assistant.

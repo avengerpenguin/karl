@@ -20,7 +20,7 @@ from textwrap import dedent
 from langchain.agents import create_agent
 
 from ..tools.cv import fetch_cv
-from ..tools.linkedin import find_latest_non_replied_chat, find_past_reply_examples, save_draft_message
+from .tools import find_latest_non_replied_chat, find_past_reply_examples, save_draft_message
 
 
 def create(model = "ollama:qwen3:14b"):

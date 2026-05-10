@@ -1,9 +1,8 @@
 from contextlib import contextmanager
-from datetime import datetime, date
-from textwrap import dedent
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
+from textwrap import dedent
 
 try:
     from imapclient import IMAPClient
@@ -11,14 +10,14 @@ except ImportError:
     raise ImportError("Please install karl[imap] to use Email tools")
 
 import os
-from imapclient.exceptions import InvalidCriteriaError, IMAPClientError
+from imapclient.exceptions import InvalidCriteriaError
 from langchain_core.tools import tool
 from pydantic import BaseModel
 
 IMAP_HOST = "mail.rossfenning.co.uk"
 IMAP_PORT = 993
 IMAP_USER = "post@rossfenning.co.uk"
-IMAP_PASSWORD = os.getenv("EMAIL_PASSWORD")
+IMAP_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
 @contextmanager
 def imap_connection():

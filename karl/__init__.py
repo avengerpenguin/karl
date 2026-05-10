@@ -1,21 +1,9 @@
 import os
 
+from langchain.agents import create_agent
 from langchain_core.messages import AIMessageChunk, AnyMessage, AIMessage, ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_ollama import ChatOllama
-
-# llm = ChatLlamaCpp(
-#     temperature=0.5,
-#     model_path="./models//Hermes-2-Pro-Llama-3-8B-F16.gguf",
-#     n_ctx=10000,
-#     n_gpu_layers=8,
-#     n_batch=300,  # Should be between 1 and n_ctx, consider the amount of VRAM in your GPU.
-#     max_tokens=512,
-#     n_threads=multiprocessing.cpu_count() - 1,
-#     repeat_penalty=1.5,
-#     top_p=0.5,
-#     verbose=True,
-# )
 
 
 client = MultiServerMCPClient(

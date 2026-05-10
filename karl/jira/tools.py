@@ -1,5 +1,4 @@
 import os
-from typing import Iterable
 
 import requests
 from pydantic import BaseModel
@@ -24,7 +23,7 @@ def get_assigned_jira_tickets() -> list[JiraTicket]:
             'jql': 'assignee = currentUser() AND statusCategory != Done',
             'fields': 'summary,key,status,customfield_10020,description,priority'
         },
-        auth=HTTPBasicAuth("rfenning@roku.com", os.getenv('ATLASSIAN_API_TOKEN')),
+        auth=HTTPBasicAuth("rfenning@roku.com", os.getenv('ATLASSIAN_API_TOKEN', '')),
     )
 
     response.raise_for_status()

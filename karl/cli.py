@@ -4,8 +4,8 @@ from functools import wraps
 import typer
 
 from . import runner
-from .agents.linkedin import create as create_linkedin_agent
-from .agents.email_agent import create as create_email_agent
+from .linkedin.agents import create as create_linkedin_agent
+from .email.agents import create as create_email_agent
 from .agents.todo import create as create_todo_agent
 from .job import review_job_ad
 
