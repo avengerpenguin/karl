@@ -1,9 +1,23 @@
 from textwrap import dedent
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ToolRetryMiddleware
+from langchain.agents.middleware import (
+    ToolRetryMiddleware,
+    ContextEditingMiddleware,
+    ClearToolUsesEdit,
+    SummarizationMiddleware,
+)
 
-from ..gitlab.tools import get_gitlab_merge_requests_created_by_user, get_gitlab_reviews_requested_for_user, get_gitlab_merge_requests_assigned_to_user
+from ..obsidian.tools import (
+    search_obsidian_notes,
+    read_obsidian_note,
+    append_to_obsidian_note,
+)
+from ..gitlab.tools import (
+    get_gitlab_merge_requests_created_by_user,
+    get_gitlab_reviews_requested_for_user,
+    get_gitlab_merge_requests_assigned_to_user,
+)
 from ..jira.tools import get_assigned_jira_tickets
 from ..email.tools import list_folders, search_emails, fetch_email
 from ..tools.cv import fetch_cv
@@ -25,7 +39,11 @@ async def create(model):
             get_gitlab_merge_requests_created_by_user,
             get_gitlab_reviews_requested_for_user,
             get_gitlab_merge_requests_assigned_to_user,
-        ] + await get_slack_tools(),
+            search_obsidian_notes,
+            read_obsidian_note,
+            append_to_obsidian_note,
+        ]
+        + await get_slack_tools(),
         system_prompt=dedent("""\
         You are a personal assistant who helps users check their various inboxes and plan their day.
 
@@ -36,6 +54,19 @@ async def create(model):
                 max_retries=5,
                 backoff_factor=2.0,
                 initial_delay=2.0,
+            ),
+            ContextEditingMiddleware(
+                edits=[
+                    ClearToolUsesEdit(
+                        trigger=50000,
+                        keep=5,
+                    ),
+                ],
+            ),
+            SummarizationMiddleware(
+                model=model,
+                trigger=("tokens", 100000),
+                keep=("tokens", 50000),
             ),
         ],
     )
