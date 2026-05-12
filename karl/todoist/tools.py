@@ -14,12 +14,13 @@ except ImportError:
 class TodoistProject(BaseModel):
     project_id: str
     name: str
+    parent_project_id: str | None = None
 
 
 class TodoistTask(BaseModel):
     task_id: str
     project_id: str
-    section_id: str
+    section_id: str | None = None
     content: str
     created_date: datetime | None = None
 
@@ -39,7 +40,12 @@ def list_todoist_projects() -> list[TodoistProject]:
     projects_iterator = api.get_projects()
     for p in projects_iterator:
         return [
-            TodoistProject(project_id=project.id, name=project.name) for project in p
+            TodoistProject(
+                project_id=project.id,
+                name=project.name,
+                parent_project_id=project.parent_id,
+            )
+            for project in p
         ]
     return []
 

@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 import yaml
 from langchain_core.messages import (
@@ -74,8 +75,10 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
         with open(memory_file, "w") as f:
             yaml.dump(messages_to_dict(messages), f)
 
+        subprocess.run(
+            ["terminal-notifier", "-message", "Karl is ready", "-sound", "Heroine"]
+        )
         new_message = input("You: ")
-        print("\x1b[1A\x1b[2K", end="")
 
 
 def _create_panel_title(step):
@@ -89,12 +92,12 @@ def _create_panel_title(step):
 def _generate_panel_text(step: str, block: dict) -> str:
     if step == "tools":
         return (
-            block["text"] if len(block["text"]) < 100 else block["text"][:100] + "..."
+            block["text"] if len(block["text"]) < 100 else block["text"][:200] + "..."
         )
 
     if step == "SummarizationMiddleware.before_model":
         return (
-            block["text"] if len(block["text"]) < 100 else block["text"][:100] + "..."
+            block["text"] if len(block["text"]) < 100 else block["text"][:200] + "..."
         )
 
     if "text" in block:

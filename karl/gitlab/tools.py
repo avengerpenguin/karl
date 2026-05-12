@@ -10,7 +10,10 @@ except ImportError:
     raise ImportError("Please install karl[gitlab] to use GitLab tools")
 
 
-gl = gitlab.Gitlab(url=os.getenv('GITLAB_URL', 'https://gitlab.com'), private_token=os.getenv('GITLAB_TOKEN'))
+gl = gitlab.Gitlab(
+    url=os.getenv("GITLAB_URL", "https://gitlab.com"),
+    private_token=os.getenv("GITLAB_TOKEN"),
+)
 
 
 class GitlabMergeRequest(BaseModel):
@@ -24,30 +27,36 @@ class GitlabMergeRequest(BaseModel):
 @tool
 def get_gitlab_merge_requests_created_by_user():
     """Get Merge Requests created by the current user"""
-    mrs: list[MergeRequest] = gl.mergerequests.list(scope="created_by_me", state="opened")
+    mrs: list[MergeRequest] = gl.mergerequests.list(
+        scope="created_by_me", state="opened"
+    )
     return [
         GitlabMergeRequest(
             mr_id=mr.id,
             mr_iid=mr.iid,
             url=mr.web_url,
             title=mr.title,
-            description=mr.description
-        ) for mr in mrs
+            description=mr.description,
+        )
+        for mr in mrs
     ]
 
 
 @tool
 def get_gitlab_merge_requests_assigned_to_user():
     """Get Merge Requests assigned to the current user"""
-    mrs: list[MergeRequest] = gl.mergerequests.list(scope="assigned_to_me", state="opened")
+    mrs: list[MergeRequest] = gl.mergerequests.list(
+        scope="assigned_to_me", state="opened"
+    )
     return [
         GitlabMergeRequest(
             mr_id=mr.id,
             mr_iid=mr.iid,
             url=mr.web_url,
             title=mr.title,
-            description=mr.description
-        ) for mr in mrs
+            description=mr.description,
+        )
+        for mr in mrs
     ]
 
 
@@ -61,6 +70,7 @@ def get_gitlab_reviews_requested_for_user():
             mr_iid=mr.iid,
             url=mr.web_url,
             title=mr.title,
-            description=mr.description
-        ) for mr in mrs
+            description=mr.description,
+        )
+        for mr in mrs
     ]
