@@ -19,9 +19,10 @@ gl = gitlab.Gitlab(
 class GitlabMergeRequest(BaseModel):
     mr_id: int
     mr_iid: int
-    url: str
+    web_url: str
     title: str
     description: str
+    state: str
 
 
 @tool
@@ -34,9 +35,10 @@ def get_gitlab_merge_requests_created_by_user():
         GitlabMergeRequest(
             mr_id=mr.id,
             mr_iid=mr.iid,
-            url=mr.web_url,
+            web_url=mr.web_url,
             title=mr.title,
             description=mr.description,
+            state=mr.state,
         )
         for mr in mrs
     ]
@@ -52,9 +54,10 @@ def get_gitlab_merge_requests_assigned_to_user():
         GitlabMergeRequest(
             mr_id=mr.id,
             mr_iid=mr.iid,
-            url=mr.web_url,
+            web_url=mr.web_url,
             title=mr.title,
             description=mr.description,
+            state=mr.state,
         )
         for mr in mrs
     ]
@@ -68,9 +71,10 @@ def get_gitlab_reviews_requested_for_user():
         GitlabMergeRequest(
             mr_id=mr.id,
             mr_iid=mr.iid,
-            url=mr.web_url,
+            web_url=mr.web_url,
             title=mr.title,
             description=mr.description,
+            state=mr.state,
         )
         for mr in mrs
     ]
