@@ -1,7 +1,8 @@
 import os
 import subprocess
-
+import asyncio
 import yaml
+from typing import AsyncIterator
 from langchain_core.messages import (
     BaseMessage,
     messages_from_dict,
@@ -9,7 +10,9 @@ from langchain_core.messages import (
     messages_to_dict,
 )
 from langchain_core.runnables import Runnable
+from langchain_core.runnables.schema import StreamEvent
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 
@@ -18,6 +21,7 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
     console = Console()
 
     memory_file = os.path.join(os.getcwd(), memory_path)
+    working_memory_file = memory_file.replace(".yaml", ".working.yaml")
     if os.path.exists(memory_file):
         with open(memory_file) as f:
             messages: list[BaseMessage] = messages_from_dict(
@@ -40,37 +44,78 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
 
         messages.append(HumanMessage(content=new_message))
 
-        async for chunk in agent.astream(
-            {"messages": messages},
-            stream_mode="updates",
-            version="v2",
-        ):
-            if chunk["type"] == "updates":
-                for step, data in chunk["data"].items():
-                    panel_title, panel_colour = _create_panel_title(step)
+        stream: AsyncIterator[StreamEvent] = await agent.astream_events(
+            dict(messages=messages), version="v3"
+        )
 
-                    if data and "messages" in data:
-                        last = data["messages"][-1]
-                        usage = getattr(last, "usage_metadata", None)
-                        if usage:
-                            console.print(
-                                f"[dim]tokens — in: {usage.get('input_tokens')}, "
-                                f"out: {usage.get('output_tokens')}, "
-                                f"total: {usage.get('total_tokens')}[/dim]"
-                            )
-                        messages.append(last)
-                        blocks = data["messages"][-1].content_blocks
-                        for block in blocks:
-                            text = _generate_panel_text(step, block)
-                            markdown = Markdown(text)
-                            console.print(
-                                Panel(
-                                    markdown,
-                                    title=panel_title,
-                                    title_align="left",
-                                    border_style=panel_colour,
-                                )
-                            )
+        async def consume_messages():
+            async for message in stream.messages:
+                async for delta in message.reasoning:
+                    print(f"[thinking] {delta}", end="", flush=True)
+
+                async for chunk in message.tool_calls:
+                    tool_name = chunk["name"]
+                    tool_args = chunk["args"]
+                    console.print(
+                        Panel(
+                            str(tool_args)[:200]
+                            if len(str(tool_args)) > 200
+                            else str(tool_args),
+                            title=tool_name + ">",
+                            title_align="left",
+                            border_style="white",
+                        )
+                    )
+
+                text = ""
+                block = "█ "
+                with Live(
+                    console=console,
+                ) as live:
+                    title, colour = _create_panel_title(message.node)
+
+                    async for delta in message.text:
+                        text += delta
+                        markdown = Markdown(text + block)
+                        live.update(
+                            Panel(
+                                markdown,
+                                title=title,
+                                title_align="left",
+                                border_style=colour,
+                            ),
+                            refresh=True,
+                        )
+
+                    if text.strip():
+                        if message.node == "tools" and len(text) > 200:
+                            text = text[:200]
+                        live.update(
+                            Panel(
+                                Markdown(text),
+                                title=title,
+                                title_align="left",
+                                border_style=colour,
+                            ),
+                            refresh=True,
+                        )
+
+                full_message = await message.output
+                usage = full_message.usage_metadata
+                if usage:
+                    console.print(
+                        f"[dim]tokens — in: {usage.get('input_tokens')}, "
+                        f"out: {usage.get('output_tokens')}, "
+                        f"total: {usage.get('total_tokens')}[/dim]"
+                    )
+
+        async def consume_values():
+            async for value in stream.values:
+                all_messages: list[BaseMessage] = value["messages"]
+                with open(working_memory_file, "w") as f:
+                    yaml.dump(messages_to_dict(all_messages), f)
+
+        await asyncio.gather(consume_messages(), consume_values())
 
         with open(memory_file, "w") as f:
             yaml.dump(messages_to_dict(messages), f)
@@ -87,23 +132,3 @@ def _create_panel_title(step):
         "tools": ("Data", "white"),
         "SummarizationMiddleware.before_model": ("Karl's inner monologue", "yellow"),
     }.get(step, (f"Unknown: {step}", "grey0"))
-
-
-def _generate_panel_text(step: str, block: dict) -> str:
-    if step == "tools":
-        return (
-            block["text"] if len(block["text"]) < 100 else block["text"][:200] + "..."
-        )
-
-    if step == "SummarizationMiddleware.before_model":
-        return (
-            block["text"] if len(block["text"]) < 100 else block["text"][:200] + "..."
-        )
-
-    if "text" in block:
-        return block["text"]
-
-    if block["type"] == "tool_call":
-        return f"Calling `{block['name']}` with arguments: {block.get('args', '')}"
-
-    return f"Unknown: {block}"

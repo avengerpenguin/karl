@@ -5,9 +5,8 @@ from langchain.agents.middleware import (
     ToolRetryMiddleware,
     ContextEditingMiddleware,
     ClearToolUsesEdit,
-    SummarizationMiddleware,
 )
-from ..tools import http
+from ..tools import http, search, cv
 from ..obsidian.tools import (
     list_obsidian_vaults,
     list_obsdian_notes_opened_recently,
@@ -22,7 +21,6 @@ from ..gitlab.tools import (
 )
 from ..jira.tools import get_assigned_jira_tickets, get_specific_jira_ticket
 from ..email.tools import list_folders, search_emails, fetch_email
-from ..tools.cv import fetch_cv
 from ..slack.tools import get_tools as get_slack_tools
 from ..todoist.tools import list_todoist_projects, list_todoist_tasks
 
@@ -34,7 +32,7 @@ async def create(model):
             list_folders,
             search_emails,
             fetch_email,
-            fetch_cv,
+            cv.fetch_cv,
             get_assigned_jira_tickets,
             get_specific_jira_ticket,
             list_todoist_projects,
@@ -47,6 +45,7 @@ async def create(model):
             search_obsidian_notes,
             read_obsidian_note,
             append_to_obsidian_note,
+            search.web_search,
             http.fetch_url,
         ]
         + await get_slack_tools(),
@@ -64,15 +63,15 @@ async def create(model):
             ContextEditingMiddleware(
                 edits=[
                     ClearToolUsesEdit(
-                        trigger=50000,
-                        keep=5,
+                        trigger=20000,
+                        keep=2,
                     ),
                 ],
             ),
-            SummarizationMiddleware(
-                model=model,
-                trigger=("tokens", 100000),
-                keep=("tokens", 50000),
-            ),
+            # SummarizationMiddleware(
+            #     model=model,
+            #     trigger=("tokens", 120000),
+            #     keep=("tokens", 50000),
+            # ),
         ],
     )

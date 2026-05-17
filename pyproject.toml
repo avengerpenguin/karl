@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 dynamic = ["version"]
 name = "karl"
 dependencies = [
-    "langchain >= 1.0.0",
+    "langchain >= 1.3.0",
     "langchain-mcp-adapters",
     "typer",
     "rich",
@@ -21,6 +21,7 @@ beeper = ["beeper_desktop_api"]
 todoist = ["todoist_api_python"]
 gitlab = ["python-gitlab"]
 jira = ["jira"]
+tavily = ["langchain-tavily"]
 test = [
     "pytest",
     "pytest-pikachu",

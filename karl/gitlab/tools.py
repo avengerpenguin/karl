@@ -3,6 +3,7 @@ import os
 from gitlab.v4.objects import MergeRequest
 from langchain_core.tools import tool
 from pydantic import BaseModel
+from typing import Literal
 
 try:
     import gitlab
@@ -14,6 +15,14 @@ gl = gitlab.Gitlab(
     url=os.getenv("GITLAB_URL", "https://gitlab.com"),
     private_token=os.getenv("GITLAB_TOKEN"),
 )
+
+
+class GitlabApprovalStatus(BaseModel):
+    state: Literal["approved", "awaiting_approval"]
+    approved: bool
+    approvals_required: int | None = None
+    approvals_left: int | None = None
+    approved_by: list[str] = []
 
 
 class GitlabMergeRequest(BaseModel):
