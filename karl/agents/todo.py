@@ -14,6 +14,7 @@ from ..obsidian.tools import (
     read_obsidian_note,
     append_to_obsidian_note,
 )
+from ..obsidian.backends import ObsidianBackend
 from ..gitlab.tools import (
     get_gitlab_merge_requests_created_by_user,
     get_gitlab_reviews_requested_for_user,
@@ -23,6 +24,7 @@ from ..jira.tools import get_assigned_jira_tickets, get_specific_jira_ticket
 from ..email.tools import list_folders, search_emails, fetch_email
 from ..slack.tools import get_tools as get_slack_tools
 from ..todoist.tools import list_todoist_projects, list_todoist_tasks
+from deepagents.middleware import FilesystemMiddleware
 
 
 async def create(model):
@@ -55,6 +57,9 @@ async def create(model):
         You have access to all relevant inboxes on services the user uses for work.
         """),
         middleware=[
+            FilesystemMiddleware(
+                backend=ObsidianBackend(vault="AI Vault"),
+            ),
             ToolRetryMiddleware(
                 max_retries=5,
                 backoff_factor=2.0,
@@ -74,4 +79,7 @@ async def create(model):
             #     keep=("tokens", 50000),
             # ),
         ],
+        # backend=FilesystemBackend(root_dir=".memory", virtual_mode=True),
+        # memory=["/memories/AGENTS.md"],
+        # skills=["/skills/"],
     )

@@ -53,19 +53,19 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
                 async for delta in message.reasoning:
                     print(f"[thinking] {delta}", end="", flush=True)
 
-                async for chunk in message.tool_calls:
-                    tool_name = chunk["name"]
-                    tool_args = chunk["args"]
-                    console.print(
-                        Panel(
-                            str(tool_args)[:200]
-                            if len(str(tool_args)) > 200
-                            else str(tool_args),
-                            title=tool_name + ">",
-                            title_align="left",
-                            border_style="white",
-                        )
-                    )
+                # async for chunk in message.tool_calls:
+                #     tool_name = chunk["name"]
+                #     tool_args = chunk["args"]
+                #     console.print(
+                #         Panel(
+                #             str(tool_args)[:200]
+                #             if len(str(tool_args)) > 200
+                #             else str(tool_args),
+                #             title=tool_name + ">",
+                #             title_align="left",
+                #             border_style="white",
+                #         )
+                #     )
 
                 text = ""
                 block = "█ "
@@ -109,13 +109,28 @@ async def run(agent: Runnable, message: str, memory_path: str = "memory.yaml"):
                         f"total: {usage.get('total_tokens')}[/dim]"
                     )
 
+        async def consume_tool_calls():
+            async for call in stream.tool_calls:
+                tool_name = call.tool_name
+                tool_args = call.input
+                console.print(
+                    Panel(
+                        str(tool_args)[:200]
+                        if len(str(tool_args)) > 200
+                        else str(tool_args),
+                        title=tool_name + ">",
+                        title_align="left",
+                        border_style="white",
+                    )
+                )
+
         async def consume_values():
             async for value in stream.values:
                 all_messages: list[BaseMessage] = value["messages"]
                 with open(working_memory_file, "w") as f:
                     yaml.dump(messages_to_dict(all_messages), f)
 
-        await asyncio.gather(consume_messages(), consume_values())
+        await asyncio.gather(consume_messages(), consume_tool_calls(), consume_values())
 
         with open(memory_file, "w") as f:
             yaml.dump(messages_to_dict(messages), f)
