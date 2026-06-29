@@ -27,13 +27,13 @@ class JiraTicket(BaseModel):
 def get_assigned_jira_tickets() -> list[JiraTicket]:
     """Get all Jira tickets assigned to the current user."""
     response = http.get(
-        "https://roku.atlassian.net/rest/api/3/search/jql",
+        f"{os.getenv('ATLASSIAN_BASE_URL')}/rest/api/3/search/jql",
         params={
             "jql": "assignee = currentUser() AND statusCategory != Done",
             "fields": "summary,key,status,customfield_10020,description,priority",
         },
         auth=HTTPBasicAuth(
-            os.getenv("ATLASSION_USER", ""), os.getenv("ATLASSIAN_API_TOKEN", "")
+            os.getenv("ATLASSIAN_USER", ""), os.getenv("ATLASSIAN_API_TOKEN", "")
         ),
     )
 
@@ -59,7 +59,7 @@ def get_assigned_jira_tickets() -> list[JiraTicket]:
                 status=issue["fields"]["status"]["name"],
                 sprint=sprint,
                 summary=issue["fields"]["summary"],
-                url=f"https://roku.atlassian.net/browse/{issue['key']}",
+                url=f"{os.getenv('ATLASSIAN_BASE_URL')}/browse/{issue['key']}",
                 priority=issue["fields"]["priority"]["name"],
                 description=description_str,
             )
@@ -71,8 +71,8 @@ def get_assigned_jira_tickets() -> list[JiraTicket]:
 def get_specific_jira_ticket(ticket_ref: str) -> JiraTicket:
     """Retrieve a specific Jira ticket by its reference."""
     jira = JIRA(
-        server="https://roku.atlassian.net",
-        basic_auth=(os.environ["ATLASSION_USER"], os.environ["ATLASSIAN_API_TOKEN"]),
+        server=os.getenv("ATLASSIAN_BASE_URL"),
+        basic_auth=(os.environ["ATLASSIAN_USER"], os.environ["ATLASSIAN_API_TOKEN"]),
     )
     issue: Issue = jira.issue(ticket_ref)
     return JiraTicket(

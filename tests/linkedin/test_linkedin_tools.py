@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from karl.linkedin.tools import (
@@ -8,11 +10,11 @@ from karl.linkedin.tools import (
 
 
 pytestmark = [pytest.mark.vcr(ignore_localhost=False)]
+os.environ["BEEPER_TOKEN"] = "tokeymctokeface"
 
 
 @pytest.mark.asyncio
 async def test_find_latest_non_replied_chat():
-    # os.environ["BEEPER_TOKEN"] = "tokeymctokeface"
     chat: LinkedInChat = await find_latest_non_replied_chat.ainvoke({})
     assert chat is not None
     assert "Bob Recruiter" in chat.messages[0].content
@@ -20,7 +22,6 @@ async def test_find_latest_non_replied_chat():
 
 @pytest.mark.asyncio
 async def test_find_past_reply_examples():
-    # os.environ["BEEPER_TOKEN"] = "tokeymctokeface"
     examples: list[LinkedInChat] = [
         c async for c in await find_past_reply_examples.ainvoke({})
     ]

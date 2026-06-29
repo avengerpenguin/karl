@@ -3,7 +3,7 @@ import glob
 import subprocess
 from deepagents.backends import BackendProtocol
 from deepagents.backends.protocol import LsResult, ReadResult, GlobResult, WriteResult, GrepResult, FileInfo, GrepMatch, \
-    EditResult, FileData
+    EditResult, FileData, FileDownloadResponse
 
 
 class ObsidianBackend(BackendProtocol):
@@ -67,7 +67,8 @@ class ObsidianBackend(BackendProtocol):
             all_files = self._cli(f"files {file_path}")
             if file_path in all_files:
                 return WriteResult(error="File exists")
-            result = self._cli(f"create name='{file_path}' content=\"{content}\"")
+            new_content = content.replace("'", "'\"'\"'")
+            result = self._cli(f"create name='{file_path}' content='{new_content}'")
             return WriteResult(path="/" + file_path)
         except Exception as e:
             return WriteResult(error=str(e))
@@ -82,16 +83,34 @@ class ObsidianBackend(BackendProtocol):
         file_path = file_path.lstrip("/")
         try:
             old_content = "\n".join(self._cli(f"read 'file={file_path}'"))
-            new_content = new_string.replace("'", r"\'")
             if replace_all:
                 new_content = old_content.replace(old_string, new_string)
             else:
                 new_content = old_content.replace(old_string, new_string, count=1)
+            new_content = new_content.replace("'", "'\"'\"'")
             self._cli(f"create name='{file_path}' overwrite content='{new_content}'")
             return EditResult(path="/" + file_path)
 
         except Exception as e:
             return EditResult(error=str(e))
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        responses: list[FileDownloadResponse] = []
+
+        for path in paths:
+            read_result = self.read(path)
+
+            if read_result.error:
+                responses.append(FileDownloadResponse(path=path, error=read_result.error))
+            else:
+                responses.append(
+                    FileDownloadResponse(
+                        path=path,
+                        content=read_result.file_data["content"].encode("utf-8"),
+                    )
+                )
+
+        return responses
 
     def _cli(self, command: str) -> list[str]:
         result = subprocess.run(

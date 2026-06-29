@@ -7,10 +7,11 @@ from . import runner
 from .linkedin.agents import create as create_linkedin_agent
 from .email.agents import create as create_email_agent
 from .agents.todo import create as create_todo_agent
+from .agents.autodidact import create as create_autodidact_agent
 from .job import review_job_ad
 
 
-DEFAULT_MODEL = "ollama:gemma4:latest"
+DEFAULT_MODEL = "ollama:gemma4:12b-mlx"
 app = typer.Typer()
 
 
@@ -49,4 +50,12 @@ async def linkedin(message: str, model: str = DEFAULT_MODEL):
 async def todo(message: str, model: str = DEFAULT_MODEL):
     await runner.run(
         await create_todo_agent(model), message, memory_path="todo_memory.yaml"
+    )
+
+
+@app.command()
+@syncify
+async def auto(message: str, model: str = DEFAULT_MODEL):
+    await runner.run(
+        await create_autodidact_agent(model), message, memory_path="auto_memory.yaml"
     )

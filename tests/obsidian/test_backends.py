@@ -39,7 +39,7 @@ def test_glob():
     assert '/Test Folder/File in Folder.md' in {f['path'] for f in backend.glob("Test Folder/*").matches}
     assert '/Test Folder/File in Folder.md' in {f['path'] for f in backend.glob("Test Folder/**").matches}
 
-def test_gresp():
+def test_grep():
     backend = ObsidianBackend("Test Vault")
 
     assert backend.grep("vault") == GrepResult(matches=[
