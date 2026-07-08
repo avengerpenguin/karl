@@ -41,7 +41,7 @@ async def email(message: str, model: str = DEFAULT_MODEL):
 @syncify
 async def linkedin(message: str, model: str = DEFAULT_MODEL):
     await runner.run(
-        create_linkedin_agent(model), message, memory_path="linkedin_memory_6.yaml"
+        create_linkedin_agent(model), message, memory_path="linkedin_memory_7.yaml"
     )
 
 
@@ -57,5 +57,5 @@ async def todo(message: str, model: str = DEFAULT_MODEL):
 @syncify
 async def auto(message: str, model: str = DEFAULT_MODEL):
     await runner.run(
-        await create_autodidact_agent(model), message, memory_path="auto_memory.yaml"
+        await create_autodidact_agent(model), message, memory_path="auto_memory_2.yaml"
     )

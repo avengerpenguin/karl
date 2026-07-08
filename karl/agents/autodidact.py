@@ -6,6 +6,7 @@ from langchain.agents.middleware import (
     after_model,
 )
 from langchain_core.messages import RemoveMessage, AnyMessage
+from langchain_core.tools import StructuredTool
 from langgraph.runtime import Runtime
 from ..tools import http, search, cv
 from ..obsidian.tools import (
@@ -22,6 +23,7 @@ from ..gitlab.tools import (
     get_gitlab_merge_requests_assigned_to_user,
 )
 from ..jira.tools import get_assigned_jira_tickets, get_specific_jira_ticket
+from ..confluence.tools import confluence
 from ..email.tools import list_folders, search_emails, fetch_email
 from ..slack.tools import get_tools as get_slack_tools
 from ..todoist.tools import list_todoist_projects, list_todoist_tasks
@@ -96,7 +98,16 @@ async def create(model):
             search.web_search,
             http.fetch_url,
         ]
-        + await get_slack_tools(),
+        + await get_slack_tools()
+        + [
+            StructuredTool.from_function(f)
+            for f in [
+                confluence.get_page_by_title,
+                confluence.get_page_by_id,
+                confluence.get_all_spaces,
+                confluence.get_all_pages_from_space,
+            ]
+        ],
         system_prompt=dedent("""\
         You are a personal assistant helping a user with any task they need help with.
         All context and knowledge are persisted via filesystem tools which should be consulted for information on any task.

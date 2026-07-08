@@ -21,6 +21,7 @@ beeper = ["beeper_desktop_api"]
 todoist = ["todoist_api_python"]
 gitlab = ["python-gitlab"]
 jira = ["jira"]
+confluence = ["atlassian-python-api"]
 tavily = ["langchain-tavily"]
 test = [
     "pytest",
