@@ -18,12 +18,17 @@ TODO:
 from textwrap import dedent
 
 from langchain.agents import create_agent
+from langchain_core.language_models import BaseChatModel
 
 from ..tools.cv import fetch_cv
-from .tools import find_latest_non_replied_chat, find_past_reply_examples, save_draft_message
+from .tools import (
+    find_latest_non_replied_chat,
+    find_past_reply_examples,
+    save_draft_message,
+)
 
 
-def create(model = "ollama:qwen3:14b"):
+def create(model: str | BaseChatModel = "ollama:qwen3:14b"):
     return create_agent(
         model,
         [

@@ -1,9 +1,12 @@
 import asyncio
+import os
 from functools import wraps
 
+import requests
 import typer
 
 from . import runner
+from .bot_runner import KarlBot
 from .linkedin.agents import create as create_linkedin_agent
 from .email.agents import create as create_email_agent
 from .agents.todo import create as create_todo_agent
@@ -59,3 +62,17 @@ async def auto(message: str, model: str = DEFAULT_MODEL):
     await runner.run(
         await create_autodidact_agent(model), message, memory_path="auto_memory_2.yaml"
     )
+
+
+@app.command()
+@syncify
+async def bot():
+    avatar_url = "https://static.wikia.nocookie.net/simpsons/images/1/18/Karl2.png/revision/latest"
+    avatar_bytes = requests.get(avatar_url).content
+    await KarlBot(
+        os.getenv("MATRIX_HOMESERVER"),
+        os.getenv("BOT_USER_ID"),
+        "karl",
+        os.getenv("MY_MATRIX_ID"),
+        allow_room_creation=True,
+    ).start("Karl", avatar_bytes)

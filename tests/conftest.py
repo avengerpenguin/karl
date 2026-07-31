@@ -8,14 +8,14 @@ from vcr import VCR
 
 
 OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1"}
-OLLAMA_PORT = 11434
+LOCAL_PORTS = {11434, 8080}
 
 
 def ignore_ollama_request(request):
     parsed = urlparse(request.uri)
     return (
         None
-        if parsed.hostname in OLLAMA_HOSTS and parsed.port == OLLAMA_PORT
+        if parsed.hostname in OLLAMA_HOSTS and parsed.port in LOCAL_PORTS
         else request
     )
 

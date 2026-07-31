@@ -83,13 +83,20 @@ class ObsidianBackend(BackendProtocol):
         file_path = file_path.lstrip("/")
         try:
             old_content = "\n".join(self._cli(f"read 'file={file_path}'"))
-            if replace_all:
-                new_content = old_content.replace(old_string, new_string)
-            else:
-                new_content = old_content.replace(old_string, new_string, count=1)
+            if old_content.startswith("Error:"):
+                return EditResult(error=str(e))
+
+            occurrences = old_content.count(old_string) if replace_all else 1
+
+            new_content = old_content.replace(
+                old_string,
+                new_string,
+                occurrences if not replace_all else -1,
+            )
+
             new_content = new_content.replace("'", "'\"'\"'")
             self._cli(f"create name='{file_path}' overwrite content='{new_content}'")
-            return EditResult(path="/" + file_path)
+            return EditResult(path="/" + file_path, occurrences=occurrences)
 
         except Exception as e:
             return EditResult(error=str(e))

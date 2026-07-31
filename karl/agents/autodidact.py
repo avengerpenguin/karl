@@ -1,13 +1,24 @@
+import json
+import os
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import (
     after_model,
+    ToolErrorMiddleware,
 )
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import RemoveMessage, AnyMessage
 from langchain_core.tools import StructuredTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
+from ..linkedin.tools import (
+    find_latest_non_replied_chat,
+    find_past_reply_examples,
+    save_draft_message,
+)
 from ..tools import http, search, cv
 from ..obsidian.tools import (
     list_obsidian_vaults,
@@ -15,6 +26,7 @@ from ..obsidian.tools import (
     search_obsidian_notes,
     read_obsidian_note,
     append_to_obsidian_note,
+    view_obsidian_base,
 )
 from ..obsidian.backends import ObsidianBackend
 from ..gitlab.tools import (
@@ -22,7 +34,27 @@ from ..gitlab.tools import (
     get_gitlab_reviews_requested_for_user,
     get_gitlab_merge_requests_assigned_to_user,
 )
-from ..jira.tools import get_assigned_jira_tickets, get_specific_jira_ticket
+from ..jira.tools import (
+    get_assigned_jira_tickets,
+    get_specific_jira_ticket,
+    get_jira_issue,
+    get_jira_issue_field_value,
+    update_jira_issue_fields,
+    jira_issue_exists,
+    assign_jira_issue,
+    create_jira_issue,
+    create_or_update_jira_issue,
+    get_jira_issue_transitions,
+    get_jira_issue_status_changelog,
+    get_jira_status_id_from_name,
+    get_jira_transition_id_to_status_name,
+    transition_jira_issue,
+    create_jira_issue_with_sdk_create_issue,
+    get_jira_issue_comments,
+    get_jira_issue_comment,
+    get_jira_issue_changelog,
+    get_jira_issue_property,
+)
 from ..confluence.tools import confluence
 from ..email.tools import list_folders, search_emails, fetch_email
 from ..slack.tools import get_tools as get_slack_tools
@@ -75,7 +107,14 @@ def delete_old_messages(state: AgentState, runtime: Runtime) -> dict | None:
     return None
 
 
-async def create(model):
+CUSTOM_MCP_TOOLS = MultiServerMCPClient(json.loads(os.getenv("CUSTOM_MCP_URLS", "{}")))
+
+
+def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
+    return f"`{request.tool_call['name']}` failed with {type(exc).__name__}."
+
+
+async def create(model: BaseChatModel | str):
     return create_deep_agent(
         model=model,
         tools=[
@@ -83,10 +122,12 @@ async def create(model):
             search_emails,
             fetch_email,
             cv.fetch_cv,
-            get_assigned_jira_tickets,
-            get_specific_jira_ticket,
             list_todoist_projects,
             list_todoist_tasks,
+            find_latest_non_replied_chat,
+            find_past_reply_examples,
+            save_draft_message,
+            cv.fetch_cv,
             get_gitlab_merge_requests_created_by_user,
             get_gitlab_reviews_requested_for_user,
             get_gitlab_merge_requests_assigned_to_user,
@@ -95,10 +136,32 @@ async def create(model):
             search_obsidian_notes,
             read_obsidian_note,
             append_to_obsidian_note,
+            view_obsidian_base,
             search.web_search,
             http.fetch_url,
+            # Jira
+            get_assigned_jira_tickets,
+            get_specific_jira_ticket,
+            get_jira_issue,
+            get_jira_issue_field_value,
+            update_jira_issue_fields,
+            jira_issue_exists,
+            assign_jira_issue,
+            create_jira_issue,
+            create_or_update_jira_issue,
+            get_jira_issue_transitions,
+            get_jira_issue_status_changelog,
+            get_jira_status_id_from_name,
+            get_jira_transition_id_to_status_name,
+            transition_jira_issue,
+            create_jira_issue_with_sdk_create_issue,
+            get_jira_issue_comments,
+            get_jira_issue_comment,
+            get_jira_issue_changelog,
+            get_jira_issue_property,
         ]
         + await get_slack_tools()
+        + await CUSTOM_MCP_TOOLS.get_tools()
         + [
             StructuredTool.from_function(f)
             for f in [
@@ -120,7 +183,7 @@ async def create(model):
         If you encounter a task for which there is no clear tool to use, you may request new tools be built to expand your capability.
         """),
         middleware=[
-            delete_old_messages,
+            ToolErrorMiddleware(on_error),
             # FilesystemMiddleware(
             #     backend=ObsidianBackend(vault="AI Vault"),
             #     system_prompt=dedent("""\

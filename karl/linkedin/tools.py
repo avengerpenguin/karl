@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timezone
-from typing import AsyncGenerator
 
 try:
     from beeper_desktop_api import AsyncBeeperDesktop
@@ -62,12 +61,14 @@ async def find_latest_non_replied_chat() -> LinkedInChat | None:
     )
 
     async for chat in client.chats.list(
-            account_ids=["linkedin"],
+        account_ids=["linkedin"],
     ):
         if chat.is_archived:
             continue
 
-        messages: list[Message] = [m async for m in client.messages.list(chat_id=chat.id)]
+        messages: list[Message] = [
+            m async for m in client.messages.list(chat_id=chat.id)
+        ]
         most_recent_message: Message = messages[0]
 
         if not most_recent_message.is_sender:
@@ -80,13 +81,14 @@ async def find_latest_non_replied_chat() -> LinkedInChat | None:
                         message_age=_create_human_readable_age(m.timestamp),
                     )
                     for m in messages
-                ])
+                ]
+            )
 
     return None
 
 
 @tool
-async def find_past_reply_examples() -> AsyncGenerator[LinkedInChat]:
+async def find_past_reply_examples() -> list[LinkedInChat]:
     """
     Find past examples of chats where the user did reply and engage.
     Useful to learn how the user has responded in the past to help match style or to include details
@@ -97,34 +99,39 @@ async def find_past_reply_examples() -> AsyncGenerator[LinkedInChat]:
     client = AsyncBeeperDesktop(
         access_token=os.getenv("BEEPER_TOKEN"),
     )
-    examples_found = 0
 
-    async for chat in client.chats.list(
+    async def generate_chats():
+        examples_found = 0
+
+        async for chat in client.chats.list(
             account_ids=["linkedin"],
-    ):
-        if chat.is_archived:
-            continue
+        ):
+            if chat.is_archived:
+                continue
 
-        messages: list[Message] = [
-            m async for m in client.messages.list(chat_id=chat.id)
-        ]
-        for message in messages:
-            if message.is_sender:
-                yield LinkedInChat(
-                    messages=[
-                        ChatMessage(
-                            sender=m.is_sender and "user" or "recruiter",
-                            content=m.text,
-                            message_date=m.timestamp.isoformat(),
-                            message_age=_create_human_readable_age(m.timestamp),
-                        )
-                        for m in reversed(messages)
-                    ])
-                examples_found += 1
+            messages: list[Message] = [
+                m async for m in client.messages.list(chat_id=chat.id)
+            ]
+            for message in messages:
+                if message.is_sender:
+                    yield LinkedInChat(
+                        messages=[
+                            ChatMessage(
+                                sender=m.is_sender and "user" or "recruiter",
+                                content=m.text,
+                                message_date=m.timestamp.isoformat(),
+                                message_age=_create_human_readable_age(m.timestamp),
+                            )
+                            for m in reversed(messages)
+                        ]
+                    )
+                    examples_found += 1
+                    break
+
+            if examples_found >= 10:
                 break
 
-        if examples_found >= 10:
-            break
+    return [c async for c in generate_chats()]
 
 
 @tool

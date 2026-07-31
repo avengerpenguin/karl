@@ -1,9 +1,23 @@
 from textwrap import dedent
+
+from deepagents import create_deep_agent
 from deepagents.backends.protocol import GrepResult, GrepMatch, WriteResult
 from karl.obsidian.backends import ObsidianBackend
 from langchain.agents import create_agent
 from deepagents.middleware import FilesystemMiddleware
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI
+
+
+MODEL = ChatOpenAI(
+    base_url="http://localhost:8080/v1",
+    api_key="dummy",
+    model="mlx-community/Qwen3.6-27B-4bit",
+    temperature=0.3,
+    streaming=True,
+    stream_chunk_timeout=600,
+    timeout=900,
+)
 
 
 def test_ls():
@@ -120,29 +134,28 @@ def test_edit_replace_all():
     ]
 
 def test_agent_memory():
-    agent1 = create_agent(
-        model="ollama:gemma4:31b",
-        middleware=[
-            FilesystemMiddleware(
-                system_prompt="Use the filesystem to store memories and information about the user",
-                backend=ObsidianBackend(vault="Test Vault"),
-            ),
-        ]
+    agent1 = create_deep_agent(
+        system_prompt=dedent("""\
+            All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
+            The filesystem knowledge base should be maintained as you execute tasks.
+        """),
+        model=MODEL,
+        memory=["/AGENTS.md"],
+        backend=ObsidianBackend(vault="Test Vault"),
     )
-    response: AIMessage = agent1.invoke(
+    response1 = agent1.invoke(
         dict(messages=[HumanMessage("Remember a fact about me: my favourite colour is purple. Save this as a memory.")])
     )
-    # tool_call: AIMessage = response['messages'][-3]
-    # assert 'purple' in tool_call.tool_calls[0]['args']['content']
-    agent2 = create_agent(
-        model="ollama:gemma4:31b",
-        middleware=[
-            FilesystemMiddleware(
-                system_prompt="Use the filesystem to retrieve and store memories and information about the user",
-                backend=ObsidianBackend(vault="Test Vault"),
-            ),
-        ]
+
+    agent2 = create_deep_agent(
+        system_prompt=dedent("""\
+            All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
+            The filesystem knowledge base should be maintained as you execute tasks.
+        """),
+        model=MODEL,
+        memory=["/AGENTS.md"],
+        backend=ObsidianBackend(vault="Test Vault"),
     )
-    response = agent2.invoke(dict(messages=[HumanMessage("Check your filesystem memories. What is my favourite colour?")]))
-    ai_message: AIMessage = response['messages'][-1]
+    response2 = agent2.invoke(dict(messages=[HumanMessage("Check your filesystem memories. What is my favourite colour?")]))
+    ai_message: AIMessage = response2['messages'][-1]
     assert 'purple' in ai_message.text.lower()

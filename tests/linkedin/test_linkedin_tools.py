@@ -22,9 +22,7 @@ async def test_find_latest_non_replied_chat():
 
 @pytest.mark.asyncio
 async def test_find_past_reply_examples():
-    examples: list[LinkedInChat] = [
-        c async for c in await find_past_reply_examples.ainvoke({})
-    ]
+    examples: list[LinkedInChat] = await find_past_reply_examples.ainvoke({})
 
     assert examples is not None
 

@@ -60,3 +60,18 @@ def append_to_obsidian_note(file_name: str, content: str, vault: str | None = No
         f"{command_base} append path=\"{file_name}\" content=\"{content}\"", shell=True,
         capture_output=True,
         text=True).stdout
+
+
+@tool
+def view_obsidian_base(file_name: str, vault: str | None = None, format: str = 'md'):
+    """
+    Views the content of an Obsidian base by its file name.
+    Pass optional vault parameter to limit to a particular vault. Use list_obsidian_vaults to get a list of vaults.
+    Pass optional format parameter to specify the format of the output. Default is md (markdown).
+    Available formats: json, csv, tsv, paths
+    """
+    command_base = f"obsidian vault={vault}" if vault else "obsidian"
+    return subprocess.run(
+        f"{command_base} base:query file=\"{file_name}\" format={format}", shell=True,
+        capture_output=True,
+        text=True).stdout

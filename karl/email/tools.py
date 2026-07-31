@@ -19,6 +19,7 @@ IMAP_PORT = 993
 IMAP_USER = "post@rossfenning.co.uk"
 IMAP_PASSWORD = os.getenv("EMAIL_PASSWORD", "")
 
+
 @contextmanager
 def imap_connection():
     server = IMAPClient(IMAP_HOST, port=IMAP_PORT, use_uid=True)
@@ -35,10 +36,7 @@ def list_folders() -> list[str]:
     List all email folders available on the server.
     """
     with imap_connection() as server:
-        return [
-            name
-            for _, _, name in server.list_folders()
-        ]
+        return [name for _, _, name in server.list_folders()]
 
 
 class Email(BaseModel):
@@ -51,6 +49,17 @@ class Email(BaseModel):
 
 class EmailError(BaseModel):
     error_message: str
+
+
+def _extract_date_sent(message) -> str:
+    date_header = message.get("date", "")
+    if not date_header:
+        return ""
+
+    try:
+        return parsedate_to_datetime(date_header).isoformat()
+    except (TypeError, ValueError):
+        return date_header
 
 
 def _extract_date_sent(message) -> str:
@@ -107,7 +116,7 @@ def _extract_text_body(message) -> str:
 
 
 @tool
-def fetch_email(folder: str, message_ids: list[int]):
+def fetch_email(folder: str, message_ids: list[int]) -> list[Email] | EmailError:
     """
     Fetch a specific email from a mailbox.
 
@@ -115,12 +124,23 @@ def fetch_email(folder: str, message_ids: list[int]):
 
     message_ids are likely to be returned by search_emails.
     """
+    if not message_ids:
+        return EmailError(error_message="No message IDs were provided.")
+
     with imap_connection() as server:
         server.select_folder(folder)
 
         emails = []
+        missing_message_ids = []
+
         for message_id, raw_email in server.fetch(message_ids, ["RFC822"]).items():
-            message = BytesParser(policy=policy.default).parsebytes(raw_email[b"RFC822"])
+            raw_message = raw_email.get(b"RFC822")
+
+            if raw_message is None:
+                missing_message_ids.append(message_id)
+                continue
+
+            message = BytesParser(policy=policy.default).parsebytes(raw_message)
 
             emails.append(
                 Email(
@@ -129,6 +149,23 @@ def fetch_email(folder: str, message_ids: list[int]):
                     sender=message.get("from", ""),
                     date_sent=_extract_date_sent(message),
                     body=_extract_text_body(message),
+                )
+            )
+
+        fetched_message_ids = {email.message_id for email in emails}
+        missing_message_ids.extend(
+            message_id
+            for message_id in message_ids
+            if message_id not in fetched_message_ids
+            and message_id not in missing_message_ids
+        )
+
+        if not emails:
+            return EmailError(
+                error_message=(
+                    f"No emails could be fetched from folder {folder!r}. "
+                    f"The message IDs may be stale, deleted, moved, or from another folder. "
+                    f"Missing IDs: {missing_message_ids}"
                 )
             )
 
@@ -148,11 +185,14 @@ def draft_email(sender: str, recipient: str, subject: str, body: str) -> str:
     """
     with imap_connection() as server:
         imap_response = server.append(
-            "Drafts", dedent(f"""\
+            "Drafts",
+            dedent(f"""\
             From: {sender}
             To: {recipient}
             Subject: {subject}
 
             {body}
-            """), [r"\Draft"])
+            """),
+            [r"\Draft"],
+        )
         return f"Response from server while saving draft email: {imap_response}"
