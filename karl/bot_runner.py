@@ -3,7 +3,6 @@ import datetime
 import os
 from datetime import timedelta
 
-import markdown
 import yaml
 from langchain_core.language_models.chat_model_stream import AsyncChatModelStream
 from langchain_core.messages import (
@@ -24,6 +23,7 @@ except ImportError:
     raise ImportError("Please install karl[matrix] to use Matrix")
 
 from .bot import PersonalBot
+from markdown_it import MarkdownIt
 
 
 # MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
@@ -56,6 +56,7 @@ class KarlBot(PersonalBot):
         )
 
     async def _send_text_message(self, room_id: str, text: str) -> str | None:
+        md = MarkdownIt("commonmark", {"html": False, "breaks": False})
         response = await self.client.room_send(
             room_id=room_id,
             message_type="m.room.message",
@@ -63,13 +64,15 @@ class KarlBot(PersonalBot):
                 "msgtype": "m.text",
                 "format": "org.matrix.custom.html",
                 "body": text,
-                "formatted_body": markdown.markdown(text).strip(),
+                "formatted_body": md.render(text).strip(),
             },
         )
         return getattr(response, "event_id", None)
 
     async def _edit_text_message(self, room_id: str, event_id: str, text: str) -> None:
-        formatted_body = markdown.markdown(text).strip()
+        md = MarkdownIt("commonmark", {"html": False, "breaks": False})
+        formatted_body = md.render(text).strip()
+        # formatted_body = markdown.markdown(text).strip()
 
         await self.client.room_send(
             room_id=room_id,

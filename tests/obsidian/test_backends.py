@@ -76,7 +76,7 @@ def test_write():
         )
         assert backend.read("/New File.md").file_data['content'] == "New file content\n"
     finally:
-        assert backend._cli("delete 'file=New File.md'") == [
+        assert backend._cli(["delete", "file=New File.md"]) == [
             "Moved to trash: New File.md",
         ]
 
@@ -86,9 +86,22 @@ def test_write_existing_file():
     assert backend.write("/New File2.md", "New file content") == WriteResult(
         error="File exists",
     )
-    assert backend._cli("delete 'file=New File2.md'") == [
+    assert backend._cli(["delete", "file=New File2.md"]) == [
         "Moved to trash: New File2.md",
     ]
+
+def test_write_to_new_folder():
+    backend = ObsidianBackend("Test Vault")
+    try:
+        assert backend.write("/New Folder/New File.md", "New file content") == WriteResult(
+            path="/New Folder/New File.md",
+        )
+        assert backend.read("/New Folder/New File.md").file_data['content'] == "New file content\n"
+    finally:
+        assert backend._cli(["delete", "path=New Folder/New File.md"]) == [
+            "Moved to trash: New Folder/New File.md",
+        ]
+
 
 def test_write_file_with_quotes():
     backend = ObsidianBackend("Test Vault")
@@ -98,7 +111,7 @@ def test_write_file_with_quotes():
     assert backend.read("/New File25.md").file_data['content'] == dedent("""\
         New file isn't free from quotes
     """)
-    assert backend._cli("delete 'file=New File25.md'") == [
+    assert backend._cli(["delete", "file=New File25.md"]) == [
         "Moved to trash: New File25.md",
     ]
 
@@ -116,7 +129,7 @@ def test_edit():
         I have edited this line
         And will edit this line and fail the test
     """)
-    assert backend._cli("delete 'file=New File3.md'") == [
+    assert backend._cli(["delete","file=New File3.md"]) == [
         "Moved to trash: New File3.md",
     ]
 
@@ -129,9 +142,22 @@ def test_edit_replace_all():
         I will edit this edited line
         And this edited line too
     """)
-    assert backend._cli("delete 'file=New File4.md'") == [
+    assert backend._cli(["delete", "file=New File4.md"]) == [
         "Moved to trash: New File4.md",
     ]
+
+def test_edit_on_non_existent_file():
+    backend = ObsidianBackend("Test Vault")
+    assert backend.edit("/New File5.md", "", dedent("""\
+        New file content but I called edit
+    """)) == WriteResult(path="/New File5.md")
+    assert backend.read("/New File5.md").file_data['content'] == dedent("""\
+        New file content but I called edit
+    """)
+    assert backend._cli(["delete", "file=New File5.md"]) == [
+        "Moved to trash: New File5.md",
+    ]
+
 
 def test_agent_memory():
     agent1 = create_deep_agent(

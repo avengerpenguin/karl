@@ -1,6 +1,8 @@
 import re
 import glob
+import os
 import subprocess
+import asyncio
 from deepagents.backends import BackendProtocol
 from deepagents.backends.protocol import LsResult, ReadResult, GlobResult, WriteResult, GrepResult, FileInfo, GrepMatch, \
     EditResult, FileData, FileDownloadResponse
@@ -9,14 +11,25 @@ from deepagents.backends.protocol import LsResult, ReadResult, GlobResult, Write
 class ObsidianBackend(BackendProtocol):
     def __init__(self, vault: str):
         self.vault = vault
-        self.command_base = f"obsidian vault='{self.vault}'"
+        self.obsidian_args = [f"vault={self.vault}"]
+
+    def _ensure_parent_folders(self, file_path: str):
+        """Helper to ensure subfolders exist using the obsidian CLI before writing."""
+        normalized = file_path.lstrip("/")
+        parts = normalized.split("/")
+        if len(parts) > 1:
+            # Reconstruct folder paths incrementally
+            for i in range(1, len(parts)):
+                folder_path = "/".join(parts[:i])
+                # Ensure the folder structure is initiated
+                self._cli(["files", f"folder={folder_path}"])
 
     def ls(self, path: str) -> LsResult:
         path = path.lstrip("/")
         try:
             return LsResult(entries=[
                 FileInfo(path="/" + path)
-                for path in self._cli(f"files folder='{path}'")
+                for path in self._cli(["files", f"folder={path}"])
             ])
         except Exception as e:
             return LsResult(error=str(e))
@@ -24,7 +37,7 @@ class ObsidianBackend(BackendProtocol):
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         file_path = file_path.lstrip("/")
         try:
-            file_lines = self._cli(f"read path='{file_path}'")
+            file_lines = self._cli(["read", f"path={file_path}"])
             if offset > 0:
                 file_lines = file_lines[offset:]
             file_lines = file_lines[:limit]
@@ -39,13 +52,13 @@ class ObsidianBackend(BackendProtocol):
         glob: str | None = None,
     ) -> GrepResult:
         try:
-            command = f"files 'folder={path}'" if path else "files"
+            command = ["files", f"folder={path}"] if path else ["files"]
             all_files = self._cli(command)
             re_pattern = re.compile(pattern)
             return GrepResult(matches=[
                 GrepMatch(path="/" + file, line=line_num, text=line)
                 for file in all_files
-                for line_num, line in enumerate(self._cli(f"read 'file={file}'"), start=0)
+                for line_num, line in enumerate(self._cli(["read", f"path={file}"]), start=0)
                 if re_pattern.search(line)
             ])
         except Exception as e:
@@ -55,7 +68,7 @@ class ObsidianBackend(BackendProtocol):
         path = path.lstrip("/")
         try:
             pattern = re.compile(glob.translate(pattern))
-            all_files = self._cli(f"files 'folder={path}'")
+            all_files = self._cli(["files", f"folder={path}"])
             matching_files = [FileInfo(path="/" + file) for file in all_files if pattern.match(file)]
             return GlobResult(matches=matching_files)
         except Exception as e:
@@ -64,11 +77,15 @@ class ObsidianBackend(BackendProtocol):
     def write(self, file_path: str, content: str) -> WriteResult:
         file_path = file_path.lstrip("/")
         try:
-            all_files = self._cli(f"files {file_path}")
+            # self._ensure_parent_folders(file_path)
+            all_files = self._cli(["files", file_path])
             if file_path in all_files:
                 return WriteResult(error="File exists")
-            new_content = content.replace("'", "'\"'\"'")
-            result = self._cli(f"create name='{file_path}' content='{new_content}'")
+            if "/" in file_path:
+                folder_path, file_name = file_path.rsplit("/", 1)
+            else:
+                folder_path, file_name = "", file_path
+            result = self._cli(["create", f"name={file_name}", f"path={folder_path}", f"content={content}"], timeout_seconds=60)
             return WriteResult(path="/" + file_path)
         except Exception as e:
             return WriteResult(error=str(e))
@@ -82,9 +99,9 @@ class ObsidianBackend(BackendProtocol):
     ) -> EditResult:
         file_path = file_path.lstrip("/")
         try:
-            old_content = "\n".join(self._cli(f"read 'file={file_path}'"))
-            if old_content.startswith("Error:"):
-                return EditResult(error=str(e))
+            old_content = "\n".join(self._cli(["read", f"path={file_path}"]))
+            if old_content.startswith("Error:") and old_content.endswith("not found."):
+                return self.write(file_path, new_string)
 
             occurrences = old_content.count(old_string) if replace_all else 1
 
@@ -94,8 +111,7 @@ class ObsidianBackend(BackendProtocol):
                 occurrences if not replace_all else -1,
             )
 
-            new_content = new_content.replace("'", "'\"'\"'")
-            self._cli(f"create name='{file_path}' overwrite content='{new_content}'")
+            self._cli(["create", f"name={file_path}", "overwrite", f"content={new_content}"], timeout_seconds=60)
             return EditResult(path="/" + file_path, occurrences=occurrences)
 
         except Exception as e:
@@ -119,7 +135,31 @@ class ObsidianBackend(BackendProtocol):
 
         return responses
 
-    def _cli(self, command: str) -> list[str]:
-        result = subprocess.run(
-            f"{self.command_base} {command}", shell=True, capture_output=True, text=True)
+    def _cli(self, args: list[str], timeout_seconds: int = 30) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["obsidian", *self.obsidian_args, *args],
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Obsidian CLI timed out after {timeout_seconds}s. "
+                f"Command args: {args!r}"
+            ) from exc
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Obsidian CLI failed\n"
+                f"Exit code: {result.returncode}\n"
+                f"Args: {args!r}\n"
+                f"stdout:\n{result.stdout}\n"
+                f"stderr:\n{result.stderr}"
+            )
+
+        if result.stdout.startswith("Error"):
+            print(f"WARNING: Error running {args!r} : {result.stdout}\n{result.stderr}")
+
         return result.stdout.splitlines()

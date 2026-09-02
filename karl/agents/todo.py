@@ -9,7 +9,7 @@ from langchain.agents.middleware import (
 from ..tools import http, search, cv
 from ..obsidian.tools import (
     list_obsidian_vaults,
-    list_obsdian_notes_opened_recently,
+    list_obsidian_notes_opened_recently,
     search_obsidian_notes,
     read_obsidian_note,
     append_to_obsidian_note,
@@ -43,7 +43,7 @@ async def create(model):
             get_gitlab_reviews_requested_for_user,
             get_gitlab_merge_requests_assigned_to_user,
             list_obsidian_vaults,
-            list_obsdian_notes_opened_recently,
+            list_obsidian_notes_opened_recently,
             search_obsidian_notes,
             read_obsidian_note,
             append_to_obsidian_note,

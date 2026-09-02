@@ -13,6 +13,7 @@ dependencies = [
     "pypdf",
     "langchain-ollama",
     "langchain-openai",
+    "markdown-it-py",
 ]
 
 [project.optional-dependencies]

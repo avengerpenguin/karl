@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 
@@ -22,7 +23,7 @@ from ..linkedin.tools import (
 from ..tools import http, search, cv
 from ..obsidian.tools import (
     list_obsidian_vaults,
-    list_obsdian_notes_opened_recently,
+    list_obsidian_notes_opened_recently,
     search_obsidian_notes,
     read_obsidian_note,
     append_to_obsidian_note,
@@ -33,6 +34,11 @@ from ..gitlab.tools import (
     get_gitlab_merge_requests_created_by_user,
     get_gitlab_reviews_requested_for_user,
     get_gitlab_merge_requests_assigned_to_user,
+    get_gitlab_merge_request_diff,
+    list_gitlab_ci_pipelines,
+    get_gitlab_ci_pipeline,
+    get_gitlab_ci_job_log,
+    get_gitlab_merge_request,
 )
 from ..jira.tools import (
     get_assigned_jira_tickets,
@@ -111,7 +117,9 @@ CUSTOM_MCP_TOOLS = MultiServerMCPClient(json.loads(os.getenv("CUSTOM_MCP_URLS", 
 
 
 def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
-    return f"`{request.tool_call['name']}` failed with {type(exc).__name__}."
+    error_message = f"`{request.tool_call['name']}` failed with {type(exc).__name__}."
+    print(f"WARNING: Tool failure: {error_message}", file=sys.stderr)
+    return error_message
 
 
 async def create(model: BaseChatModel | str):
@@ -131,8 +139,13 @@ async def create(model: BaseChatModel | str):
             get_gitlab_merge_requests_created_by_user,
             get_gitlab_reviews_requested_for_user,
             get_gitlab_merge_requests_assigned_to_user,
+            get_gitlab_merge_request,
+            get_gitlab_merge_request_diff,
+            list_gitlab_ci_pipelines,
+            get_gitlab_ci_pipeline,
+            get_gitlab_ci_job_log,
             list_obsidian_vaults,
-            list_obsdian_notes_opened_recently,
+            list_obsidian_notes_opened_recently,
             search_obsidian_notes,
             read_obsidian_note,
             append_to_obsidian_note,
@@ -166,9 +179,10 @@ async def create(model: BaseChatModel | str):
             StructuredTool.from_function(f)
             for f in [
                 confluence.get_page_by_title,
-                confluence.get_page_by_id,
+                confluence.get_page_id_by_url,
                 confluence.get_all_spaces,
                 confluence.get_all_pages_from_space,
+                confluence.get_comments,
             ]
         ],
         system_prompt=dedent("""\
