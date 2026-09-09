@@ -31,6 +31,9 @@ from ..obsidian.tools import (
     read_obsidian_note,
     append_to_obsidian_note,
     view_obsidian_base,
+    get_daily_note_path,
+    append_to_daily_note,
+    read_daily_note,
 )
 from ..obsidian.backends import ObsidianBackend
 from ..gitlab.tools import (
@@ -144,7 +147,7 @@ def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
 
 
 async def create(model: BaseChatModel | str):
-    # checkpointer = await get_checkpointer()
+    checkpointer = await get_checkpointer()
 
     return create_deep_agent(
         model=model,
@@ -173,6 +176,9 @@ async def create(model: BaseChatModel | str):
             read_obsidian_note,
             append_to_obsidian_note,
             view_obsidian_base,
+            get_daily_note_path,
+            read_daily_note,
+            append_to_daily_note,
             search.web_search,
             http.fetch_url,
             # Jira
@@ -228,6 +234,18 @@ async def create(model: BaseChatModel | str):
                     "append_to_obsidian_note": {
                         "allowed_decisions": ["approve", "reject"],
                     },
+                    "append_to_daily_note": {
+                        "allowed_decisions": ["approve", "reject"],
+                    },
+                    "create_jira_issue": {
+                        "allowed_decisions": ["approve", "reject"],
+                    },
+                    "create_or_update_jira_issue": {
+                        "allowed_decisions": ["approve", "reject"],
+                    },
+                    "update_content": {
+                        "allowed_decisions": ["approve", "reject"],
+                    },
                 },
                 description_prefix="The agent wants to call a tool that requires approval.",
             ),
@@ -256,7 +274,7 @@ async def create(model: BaseChatModel | str):
             #     ],
             # ),
         ],
-        # checkpointer=checkpointer,
+        checkpointer=checkpointer,
         backend=ObsidianBackend(vault="AI Vault"),
         memory=["/AGENTS.md"],
         skills=["/skills/"],
