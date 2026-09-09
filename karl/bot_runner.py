@@ -1,7 +1,6 @@
 import asyncio
-import datetime
+import hashlib
 import os
-from datetime import timedelta
 
 import yaml
 from langchain_core.language_models.chat_model_stream import AsyncChatModelStream
@@ -15,6 +14,7 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt._tool_call_stream import ToolCallStream
 from langgraph.stream import AsyncGraphRunStream, StreamChannel
+from typing_extensions import override
 from .agents.autodidact import create as create_autodidact_agent
 
 try:
@@ -42,6 +42,34 @@ MODEL = "openai:gpt-5.6-sol"
 
 
 class KarlBot(PersonalBot):
+    def _get_thread_root_event_id(self, event: RoomMessageText) -> str:
+        relates_to = (
+            getattr(event, "source", {}).get("content", {}).get("m.relates_to", {})
+        )
+
+        if relates_to.get("rel_type") == "m.thread" and relates_to.get("event_id"):
+            return relates_to["event_id"]
+
+        return event.event_id
+
+    def _agent_thread_id(self, room_id: str, thread_root_event_id: str) -> str:
+        raw = f"{room_id}:{thread_root_event_id}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _thread_relates_to(
+        self,
+        thread_root_event_id: str,
+        reply_to_event_id: str | None = None,
+    ) -> dict:
+        return {
+            "rel_type": "m.thread",
+            "event_id": thread_root_event_id,
+            "is_falling_back": True,
+            "m.in_reply_to": {
+                "event_id": reply_to_event_id or thread_root_event_id,
+            },
+        }
+
     async def _react_to_event(self, room_id: str, event_id: str, key: str) -> None:
         await self.client.room_send(
             room_id=room_id,
@@ -55,17 +83,56 @@ class KarlBot(PersonalBot):
             },
         )
 
-    async def _send_text_message(self, room_id: str, text: str) -> str | None:
+    async def _send_text_message(
+        self,
+        room_id: str,
+        text: str,
+        thread_root_event_id: str | None = None,
+        reply_to_event_id: str | None = None,
+    ) -> str | None:
         md = MarkdownIt("commonmark", {"html": False, "breaks": False})
+        content = {
+            "msgtype": "m.text",
+            "format": "org.matrix.custom.html",
+            "body": text,
+            "formatted_body": md.render(text).strip(),
+        }
+
+        if thread_root_event_id is not None:
+            content["m.relates_to"] = self._thread_relates_to(
+                thread_root_event_id,
+                reply_to_event_id,
+            )
+
         response = await self.client.room_send(
             room_id=room_id,
             message_type="m.room.message",
-            content={
-                "msgtype": "m.text",
-                "format": "org.matrix.custom.html",
-                "body": text,
-                "formatted_body": md.render(text).strip(),
-            },
+            content=content,
+        )
+        return getattr(response, "event_id", None)
+
+    async def _send_notice(
+        self,
+        room_id: str,
+        text: str,
+        thread_root_event_id: str | None = None,
+        reply_to_event_id: str | None = None,
+    ) -> str | None:
+        content = {
+            "msgtype": "m.notice",
+            "body": text,
+        }
+
+        if thread_root_event_id is not None:
+            content["m.relates_to"] = self._thread_relates_to(
+                thread_root_event_id,
+                reply_to_event_id,
+            )
+
+        response = await self.client.room_send(
+            room_id=room_id,
+            message_type="m.room.message",
+            content=content,
         )
         return getattr(response, "event_id", None)
 
@@ -95,11 +162,14 @@ class KarlBot(PersonalBot):
             },
         )
 
+    @override
     async def generate_reply(self, room: MatrixRoom, event: RoomMessageText) -> None:
         agent = await create_autodidact_agent(MODEL)
 
-        current_day = (datetime.datetime.now() - timedelta(hours=4)).date().isoformat()
-        memory_file = os.path.join(os.getcwd(), f"bot-{current_day}.yaml")
+        thread_root_event_id = self._get_thread_root_event_id(event)
+        agent_thread_id = self._agent_thread_id(room.room_id, thread_root_event_id)
+
+        memory_file = os.path.join(os.getcwd(), f"bot-thread-{agent_thread_id}.yaml")
         working_memory_file = memory_file.replace(".yaml", ".working.yaml")
 
         if os.path.exists(memory_file):
@@ -114,19 +184,24 @@ class KarlBot(PersonalBot):
         messages.append(HumanMessage(content=event.body))
 
         await self.client.room_typing(room.room_id, True)
-        await self.client.room_send(
-            room_id=room.room_id,
-            message_type="m.room.message",
-            content={
-                "msgtype": "m.notice",
-                "body": "Thinking…",
-            },
+        await self._send_notice(
+            room.room_id,
+            "Thinking…",
+            thread_root_event_id=thread_root_event_id,
+            reply_to_event_id=event.event_id,
         )
 
         reaction = "✅"
         try:
+            agent_config = {
+                "configurable": {
+                    "thread_id": agent_thread_id,
+                    "matrix_room_id": room.room_id,
+                    "matrix_thread_root_event_id": thread_root_event_id,
+                }
+            }
             stream: AsyncGraphRunStream = await agent.astream_events(
-                dict(messages=messages), version="v3"
+                dict(messages=messages), version="v3", config=agent_config
             )
 
             async def consume_messages():
@@ -139,13 +214,11 @@ class KarlBot(PersonalBot):
                             if not delta or not delta.strip():
                                 continue
 
-                            await self.client.room_send(
-                                room_id=room.room_id,
-                                message_type="m.room.message",
-                                content={
-                                    "msgtype": "m.notice",
-                                    "body": f"[thinking] {delta.strip()}",
-                                },
+                            await self._send_notice(
+                                room.room_id,
+                                f"[thinking] {delta.strip()}",
+                                thread_root_event_id=thread_root_event_id,
+                                reply_to_event_id=event.event_id,
                             )
 
                     async def consume_text() -> tuple[str, str | None]:
@@ -170,6 +243,8 @@ class KarlBot(PersonalBot):
                                 message_event_id = await self._send_text_message(
                                     room.room_id,
                                     preview_text,
+                                    thread_root_event_id=thread_root_event_id,
+                                    reply_to_event_id=event.event_id,
                                 )
                                 last_edit_at = now
                             elif now - last_edit_at >= min_edit_interval_seconds:
@@ -200,19 +275,22 @@ class KarlBot(PersonalBot):
 
                     usage = full_message.usage_metadata
                     if usage:
-                        await self.client.room_send(
-                            room_id=room.room_id,
-                            message_type="m.room.message",
-                            content={
-                                "msgtype": "m.notice",
-                                "body": f"tokens — in: {usage.get('input_tokens')}, "
-                                f"out: {usage.get('output_tokens')}, "
-                                f"total: {usage.get('total_tokens')}",
-                            },
+                        await self._send_notice(
+                            room.room_id,
+                            f"tokens — in: {usage.get('input_tokens')}, "
+                            f"out: {usage.get('output_tokens')}, "
+                            f"total: {usage.get('total_tokens')}",
+                            thread_root_event_id=thread_root_event_id,
+                            reply_to_event_id=event.event_id,
                         )
 
                     if message_event_id is None:
-                        await self._send_text_message(room.room_id, final_text)
+                        await self._send_text_message(
+                            room.room_id,
+                            final_text,
+                            thread_root_event_id=thread_root_event_id,
+                            reply_to_event_id=event.event_id,
+                        )
                     else:
                         await self._edit_text_message(
                             room.room_id,
@@ -232,13 +310,11 @@ class KarlBot(PersonalBot):
                         else str(tool_args)
                     )
 
-                    await self.client.room_send(
-                        room_id=room.room_id,
-                        message_type="m.room.message",
-                        content={
-                            "msgtype": "m.notice",
-                            "body": f"Calling tool `{tool_name}` with input `{tool_args_snip}`",
-                        },
+                    await self._send_notice(
+                        room.room_id,
+                        f"Calling tool `{tool_name}` with input `{tool_args_snip}`",
+                        thread_root_event_id=thread_root_event_id,
+                        reply_to_event_id=event.event_id,
                     )
 
             async def consume_values():

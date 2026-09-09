@@ -2,17 +2,20 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from textwrap import dedent
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import (
     after_model,
     ToolErrorMiddleware,
+    HumanInTheLoopMiddleware,
 )
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import RemoveMessage, AnyMessage
 from langchain_core.tools import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
 from ..linkedin.tools import (
@@ -115,6 +118,24 @@ def delete_old_messages(state: AgentState, runtime: Runtime) -> dict | None:
 
 CUSTOM_MCP_TOOLS = MultiServerMCPClient(json.loads(os.getenv("CUSTOM_MCP_URLS", "{}")))
 
+_CHECKPOINTER_CONTEXT = None
+_CHECKPOINTER = None
+
+
+async def get_checkpointer() -> AsyncSqliteSaver:
+    global _CHECKPOINTER_CONTEXT, _CHECKPOINTER
+
+    if _CHECKPOINTER is None:
+        checkpoint_path = Path(
+            os.getenv("KARL_CHECKPOINT_DB", ".karl/checkpoints.sqlite")
+        )
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        _CHECKPOINTER_CONTEXT = AsyncSqliteSaver.from_conn_string(str(checkpoint_path))
+        _CHECKPOINTER = await _CHECKPOINTER_CONTEXT.__aenter__()
+
+    return _CHECKPOINTER
+
 
 def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
     error_message = f"`{request.tool_call['name']}` failed with {type(exc).__name__}."
@@ -123,6 +144,8 @@ def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
 
 
 async def create(model: BaseChatModel | str):
+    # checkpointer = await get_checkpointer()
+
     return create_deep_agent(
         model=model,
         tools=[
@@ -183,6 +206,8 @@ async def create(model: BaseChatModel | str):
                 confluence.get_all_spaces,
                 confluence.get_all_pages_from_space,
                 confluence.get_comments,
+                confluence.get_child_pages,
+                confluence.update_content,
             ]
         ],
         system_prompt=dedent("""\
@@ -198,6 +223,14 @@ async def create(model: BaseChatModel | str):
         """),
         middleware=[
             ToolErrorMiddleware(on_error),
+            HumanInTheLoopMiddleware(
+                interrupt_on={
+                    "append_to_obsidian_note": {
+                        "allowed_decisions": ["approve", "reject"],
+                    },
+                },
+                description_prefix="The agent wants to call a tool that requires approval.",
+            ),
             # FilesystemMiddleware(
             #     backend=ObsidianBackend(vault="AI Vault"),
             #     system_prompt=dedent("""\
@@ -223,6 +256,7 @@ async def create(model: BaseChatModel | str):
             #     ],
             # ),
         ],
+        # checkpointer=checkpointer,
         backend=ObsidianBackend(vault="AI Vault"),
         memory=["/AGENTS.md"],
         skills=["/skills/"],

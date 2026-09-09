@@ -14,6 +14,8 @@ dependencies = [
     "langchain-ollama",
     "langchain-openai",
     "markdown-it-py",
+    "langgraph-checkpoint-sqlite",
+    "aiosqlite",
 ]
 
 [project.optional-dependencies]
@@ -24,11 +26,13 @@ gitlab = ["python-gitlab"]
 jira = ["jira", "atlassian-python-api"]
 confluence = ["atlassian-python-api"]
 tavily = ["langchain-tavily"]
+matrix = ["matrix-nio"]
 test = [
     "pytest",
     "pytest-pikachu",
     "pytest-asyncio",
     "pytest-recording",
+    "testcontainers",
 ]
 
 [tool.pytest]
