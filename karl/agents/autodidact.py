@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from textwrap import dedent
+from urllib.parse import parse_qs, urlparse
 
 from langchain.agents import AgentState
 from langchain.agents.middleware import (
@@ -18,6 +19,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
+from mcp.client.auth import TokenStorage, OAuthClientProvider
+from mcp.shared.auth import OAuthToken, OAuthClientInformationFull, OAuthClientMetadata
+from pydantic import AnyUrl
 from ..linkedin.tools import (
     find_latest_non_replied_chat,
     find_past_reply_examples,
@@ -70,7 +74,6 @@ from ..jira.tools import (
 from ..confluence.tools import confluence
 from ..email.tools import list_folders, search_emails, fetch_email
 from ..slack.tools import get_tools as get_slack_tools
-from ..todoist.tools import list_todoist_projects, list_todoist_tasks
 from deepagents import create_deep_agent
 
 
@@ -119,7 +122,60 @@ def delete_old_messages(state: AgentState, runtime: Runtime) -> dict | None:
     return None
 
 
-CUSTOM_MCP_TOOLS = MultiServerMCPClient(json.loads(os.getenv("CUSTOM_MCP_URLS", "{}")))
+async def handle_redirect(auth_url: str) -> None:
+    print(f"Visit: {auth_url}")
+
+
+async def handle_callback() -> tuple[str, str | None]:
+    callback_url = input("Paste callback URL: ")
+    params = parse_qs(urlparse(callback_url).query)
+    return params["code"][0], params.get("state", [None])[0]
+
+
+class InMemoryTokenStorage(TokenStorage):
+    """Demo In-memory token storage implementation."""
+
+    def __init__(self):
+        self.tokens: OAuthToken | None = None
+        self.client_info: OAuthClientInformationFull | None = None
+
+    async def get_tokens(self) -> OAuthToken | None:
+        """Get stored tokens."""
+        return self.tokens
+
+    async def set_tokens(self, tokens: OAuthToken) -> None:
+        """Store tokens."""
+        self.tokens = tokens
+
+    async def get_client_info(self) -> OAuthClientInformationFull | None:
+        """Get stored client information."""
+        return self.client_info
+
+    async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
+        """Store client information."""
+        self.client_info = client_info
+
+
+mcp_config = json.loads(os.getenv("CUSTOM_MCP_URLS", "{}"))
+for service, mcp in mcp_config.items():
+    if mcp.get("auth", None) == "oauth":
+        storage = InMemoryTokenStorage()
+        oauth_auth = OAuthClientProvider(
+            server_url=mcp["url"],
+            client_metadata=OAuthClientMetadata(
+                client_name="Example MCP Client",
+                redirect_uris=[AnyUrl("http://localhost:8000/callback")],
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+                scope="user",
+            ),
+            storage=storage,
+            redirect_handler=handle_redirect,
+            callback_handler=handle_callback,
+        )
+        mcp["auth"] = oauth_auth
+
+CUSTOM_MCP_TOOLS = MultiServerMCPClient(mcp_config, tool_name_prefix=True)
 
 _CHECKPOINTER_CONTEXT = None
 _CHECKPOINTER = None
@@ -141,7 +197,7 @@ async def get_checkpointer() -> AsyncSqliteSaver:
 
 
 def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
-    error_message = f"`{request.tool_call['name']}` failed with {type(exc).__name__}."
+    error_message = f"`{request.tool_call['name']}` failed with {type(exc).__name__}. Full info: {exc}"
     print(f"WARNING: Tool failure: {error_message}", file=sys.stderr)
     return error_message
 
@@ -156,8 +212,8 @@ async def create(model: BaseChatModel | str):
             search_emails,
             fetch_email,
             cv.fetch_cv,
-            list_todoist_projects,
-            list_todoist_tasks,
+            # list_todoist_projects,
+            # list_todoist_tasks,
             find_latest_non_replied_chat,
             find_past_reply_examples,
             save_draft_message,
@@ -208,12 +264,12 @@ async def create(model: BaseChatModel | str):
             StructuredTool.from_function(f)
             for f in [
                 confluence.get_page_by_title,
-                confluence.get_page_id_by_url,
+                confluence.get_page_by_id,
                 confluence.get_all_spaces,
                 confluence.get_all_pages_from_space,
-                confluence.get_comments,
                 confluence.get_child_pages,
-                confluence.update_content,
+                confluence.update_page,
+                confluence.get_page_comments,
             ]
         ],
         system_prompt=dedent("""\

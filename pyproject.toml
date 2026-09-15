@@ -6,8 +6,9 @@ build-backend = "setuptools.build_meta"
 dynamic = ["version"]
 name = "karl"
 dependencies = [
-    "langchain >= 1.3.0",
+    "langchain >= 1.4.0",
     "langchain-mcp-adapters",
+    "deepagents",
     "typer",
     "rich",
     "pypdf",
@@ -24,9 +25,9 @@ beeper = ["beeper_desktop_api"]
 todoist = ["todoist_api_python"]
 gitlab = ["python-gitlab"]
 jira = ["jira", "atlassian-python-api"]
-confluence = ["atlassian-python-api"]
+confluence = ["atlassian-python-api==4.0.4"]
 tavily = ["langchain-tavily"]
-matrix = ["matrix-nio"]
+matrix = ["matrix-nio", "markdown-it-py"]
 test = [
     "pytest",
     "pytest-pikachu",

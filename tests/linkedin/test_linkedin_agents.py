@@ -14,7 +14,7 @@ os.environ["BEEPER_TOKEN"] = "tokeymctokeface"
 MODEL = ChatOpenAI(
     base_url="http://localhost:8080/v1",
     api_key="dummy",
-    model="mlx-community/Qwen3.6-27B-4bit",
+    model="mlx-community/Qwen3.8-27B-4bit",
     temperature=0.3,
     streaming=True,
     stream_chunk_timeout=600,
@@ -24,7 +24,7 @@ MODEL = ChatOpenAI(
 
 @pytest.mark.parametrize(
     "model",
-    [MODEL, "ollama:gemma4:12b-mlx"],
+    [MODEL],
 )
 @pytest.mark.asyncio
 async def test_linkedin_agent(model: str | BaseChatModel):

@@ -173,6 +173,25 @@ def fetch_email(folder: str, message_ids: list[int]) -> list[Email] | EmailError
 
 
 @tool
+def archive_email(folder: str, message_ids: list[int]) -> str | EmailError:
+    """
+    Move one or more emails from the current folder to the Archives folder.
+
+    message_ids should contain at least one numeric id, likely returned by search_emails.
+    """
+    if not message_ids:
+        return EmailError(error_message="No message IDs were provided.")
+
+    with imap_connection() as server:
+        server.select_folder(folder)
+        imap_response = server.move(message_ids, "archive")
+        return (
+            f"Moved {len(message_ids)} email(s) from {folder!r} to 'archive'. "
+            f"Response from server: {imap_response}"
+        )
+
+
+@tool
 def draft_email(sender: str, recipient: str, subject: str, body: str) -> str:
     """
     Used to suggest a draft email to the user instead of being able to send emails directly.

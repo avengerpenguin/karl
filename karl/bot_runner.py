@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 
 from langchain_core.language_models.chat_model_stream import AsyncChatModelStream
@@ -14,6 +15,7 @@ from langgraph.stream import AsyncGraphRunStream, StreamChannel
 from langgraph.types import Command
 from typing_extensions import override
 from .agents.autodidact import create as create_autodidact_agent
+from .agents.tracer import ConsoleTraceHandler
 
 try:
     from nio import MatrixRoom, RoomMessageText
@@ -24,19 +26,23 @@ from .bot import PersonalBot
 from markdown_it import MarkdownIt
 
 
+logging.basicConfig(level=logging.INFO)
+
+
 # MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
 # MODEL = "ollama:gemma4:12b-mlx"
 # MODEL = "openai:mlx-community/Qwen3.6-35B-A3B-4bit"
 MODEL = ChatOpenAI(
     base_url="http://localhost:8080/v1",
     api_key="dummy",
-    model="mlx-community/Qwen3.6-27B-4bit",
+    model="mlx-community/gemma-4-12B-4bit",
     temperature=0.3,
     streaming=True,
-    stream_chunk_timeout=600,
+    stream_chunk_timeout=900,
     timeout=900,
 )
 MODEL = "openai:gpt-5.6-sol"
+# MODEL = "ollama:gemma4:12b-mlx"
 MAX_INTERRUPT_CHARS = 12_000
 LARGE_STRING_ARG_CHARS = 200
 PREVIEW_ARG_NAMES = {
@@ -49,17 +55,16 @@ PREVIEW_ARG_NAMES = {
 }
 
 
+def _get_thread_root_event_id(event: RoomMessageText) -> str:
+    relates_to = getattr(event, "source", {}).get("content", {}).get("m.relates_to", {})
+
+    if relates_to.get("rel_type") == "m.thread" and relates_to.get("event_id"):
+        return relates_to["event_id"]
+
+    return event.event_id
+
+
 class KarlBot(PersonalBot):
-    def _get_thread_root_event_id(self, event: RoomMessageText) -> str:
-        relates_to = (
-            getattr(event, "source", {}).get("content", {}).get("m.relates_to", {})
-        )
-
-        if relates_to.get("rel_type") == "m.thread" and relates_to.get("event_id"):
-            return relates_to["event_id"]
-
-        return event.event_id
-
     def _agent_thread_id(self, room_id: str, thread_root_event_id: str) -> str:
         raw = f"{room_id}:{thread_root_event_id}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -396,14 +401,20 @@ class KarlBot(PersonalBot):
     async def generate_reply(self, room: MatrixRoom, event: RoomMessageText) -> None:
         agent = await create_autodidact_agent(MODEL)
 
-        thread_root_event_id = self._get_thread_root_event_id(event)
+        thread_root_event_id = _get_thread_root_event_id(event)
         agent_thread_id = self._agent_thread_id(room.room_id, thread_root_event_id)
         agent_config = {
             "configurable": {
                 "thread_id": agent_thread_id,
                 "matrix_room_id": room.room_id,
                 "matrix_thread_root_event_id": thread_root_event_id,
-            }
+            },
+            "callbacks": [ConsoleTraceHandler()],
+            "tags": ["matrix", "karlbot"],
+            "metadata": {
+                "room_id": room.room_id,
+                "thread_root_event_id": thread_root_event_id,
+            },
         }
 
         review_decision = self._human_review_decision(event.body)
