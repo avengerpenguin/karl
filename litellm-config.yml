@@ -1,0 +1,29 @@
+model_list:
+  - model_name: work-gpt-4o
+    litellm_params:
+      model: openai/azure-deployment-name  # Prefixed with openai/ to trigger compatibility mode
+      api_base: os.environ/OPENAI_BASE_URL # Dynamically reads your company gateway URL
+      api_key: os.environ/OPENAI_API_KEY
+      
+      # The Failover Chain: If company Azure drops, go to backup cloud, then local MLX
+      fallbacks: [backup-cloud-mini, local-mlx-hermes]
+
+  - model_name: backup-cloud-mini
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY # Your private personal backup key
+
+  - model_name: local-mlx-hermes
+    litellm_params:
+      model: openai/hermes-3
+      api_base: http://docker.internal # Native MLX_LM / Ollama running on your Mac
+      api_key: local-sandbox-key
+
+
+
+      
+litellm_settings:
+  # If a model hits a context window limit, automatically escalate to these larger profiles
+  context_window_fallbacks:
+    - work-gpt-4o: [local-mlx-hermes, backup-cloud-large-context]
+
