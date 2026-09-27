@@ -12,7 +12,7 @@ os.environ["BEEPER_TOKEN"] = "tokeymctokeface"
 
 
 MODEL = ChatOpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="http://127.0.0.1:5276/v1",
     api_key="dummy",
     model="mlx-community/Qwen3.8-27B-4bit",
     temperature=0.3,

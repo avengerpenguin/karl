@@ -8,7 +8,7 @@ from vcr import VCR
 
 
 OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1"}
-LOCAL_PORTS = {11434, 8080}
+LOCAL_PORTS = {11434, 8080, 5276}
 
 
 def ignore_ollama_request(request):

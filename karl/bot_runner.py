@@ -31,19 +31,29 @@ logging.basicConfig(level=logging.INFO)
 
 # MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
 # MODEL = "ollama:gemma4:12b-mlx"
-# MODEL = "openai:mlx-community/Qwen3.6-35B-A3B-4bit"
+# MODEL = "openai:mlx-community/Qwen3.8-27B-4bit"
 MODEL = ChatOpenAI(
     base_url="http://localhost:8080/v1",
     api_key="dummy",
-    model="mlx-community/gemma-4-12B-4bit",
+    model="mlx-community/gemma-3-4b-pt-4bit",
     temperature=0.3,
     streaming=True,
     stream_chunk_timeout=900,
     timeout=900,
 )
-MODEL = "openai:gpt-5.6-sol"
+# MODEL = "openai:gemini-3.8-flash"
+# MODEL = ChatOpenAI(
+#     model=os.getenv("KARL_MODEL", "gpt-5.5"),
+#     # temperature=0.3,
+#     streaming=True,
+#     stream_chunk_timeout=900,
+#     timeout=900,
+#     use_responses_api=False,
+# )
 # MODEL = "ollama:gemma4:12b-mlx"
+MODEL = "openai:gpt-5.5"
 MAX_INTERRUPT_CHARS = 12_000
+MAX_MATRIX_NOTICE_CHARS = 20_000
 LARGE_STRING_ARG_CHARS = 200
 PREVIEW_ARG_NAMES = {
     "content",
@@ -171,6 +181,12 @@ class KarlBot(PersonalBot):
 
         return f"{fence}\n{value}\n{fence}"
 
+    def _truncate_review_text(self, value: str) -> str:
+        if len(value) <= MAX_INTERRUPT_CHARS:
+            return value
+
+        return value[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
+
     def _format_tool_args_for_review(self, args: object) -> str:
         if not isinstance(args, dict):
             try:
@@ -183,8 +199,7 @@ class KarlBot(PersonalBot):
             except Exception:
                 pretty_args = str(args)
 
-            if len(pretty_args) > MAX_INTERRUPT_CHARS:
-                pretty_args = pretty_args[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
+            pretty_args = self._truncate_review_text(pretty_args)
 
             return "Arguments:\n\n" + self._markdown_code_fence(pretty_args, "json")
 
@@ -207,8 +222,7 @@ class KarlBot(PersonalBot):
             display_args[key] = "<rendered below>"
 
             preview = value.strip() if value.strip() else "<empty>"
-            if len(preview) > MAX_INTERRUPT_CHARS:
-                preview = preview[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
+            preview = self._truncate_review_text(preview)
 
             rendered_sections.append(f"{key} preview:\n\n---\n\n{preview}\n\n---")
 
@@ -218,6 +232,7 @@ class KarlBot(PersonalBot):
             ensure_ascii=False,
             default=str,
         )
+        pretty_args = self._truncate_review_text(pretty_args)
 
         sections = [
             "Arguments:",
@@ -225,7 +240,7 @@ class KarlBot(PersonalBot):
         ]
         sections.extend(rendered_sections)
 
-        return "\n\n".join(sections)
+        return self._truncate_review_text("\n\n".join(sections))
 
     def _format_interrupt(self, interrupt: object) -> str:
         value = getattr(interrupt, "value", interrupt)
@@ -346,6 +361,35 @@ class KarlBot(PersonalBot):
         )
         return getattr(response, "event_id", None)
 
+    def _split_matrix_notice(self, text: str) -> list[str]:
+        if len(text) <= MAX_MATRIX_NOTICE_CHARS:
+            return [text]
+
+        chunks: list[str] = []
+        remaining = text
+
+        while remaining:
+            chunk = remaining[:MAX_MATRIX_NOTICE_CHARS]
+
+            if len(remaining) > MAX_MATRIX_NOTICE_CHARS:
+                split_at = max(chunk.rfind("\n\n"), chunk.rfind("\n"))
+
+                if split_at > MAX_MATRIX_NOTICE_CHARS // 2:
+                    chunk = remaining[:split_at].rstrip()
+                    remaining = remaining[split_at:].lstrip()
+                else:
+                    remaining = remaining[MAX_MATRIX_NOTICE_CHARS:].lstrip()
+            else:
+                remaining = ""
+
+            chunks.append(chunk)
+
+        total = len(chunks)
+        return [
+            f"(part {index}/{total})\n\n{chunk}"
+            for index, chunk in enumerate(chunks, start=1)
+        ]
+
     async def _send_notice(
         self,
         room_id: str,
@@ -353,23 +397,54 @@ class KarlBot(PersonalBot):
         thread_root_event_id: str | None = None,
         reply_to_event_id: str | None = None,
     ) -> str | None:
-        content = {
-            "msgtype": "m.notice",
-            "body": text,
-        }
+        first_event_id: str | None = None
 
-        if thread_root_event_id is not None:
-            content["m.relates_to"] = self._thread_relates_to(
-                thread_root_event_id,
-                reply_to_event_id,
+        for chunk in self._split_matrix_notice(text):
+            content = {
+                "msgtype": "m.notice",
+                "body": chunk,
+            }
+
+            if thread_root_event_id is not None:
+                content["m.relates_to"] = self._thread_relates_to(
+                    thread_root_event_id,
+                    reply_to_event_id,
+                )
+
+            response = await self.client.room_send(
+                room_id=room_id,
+                message_type="m.room.message",
+                content=content,
             )
 
-        response = await self.client.room_send(
+            event_id = getattr(response, "event_id", None)
+            if event_id is None:
+                logging.warning(
+                    "Matrix notice send did not return an event_id: %r", response
+                )
+
+            if first_event_id is None:
+                first_event_id = event_id
+
+        return first_event_id
+
+    async def _edit_notice(self, room_id: str, event_id: str, text: str) -> None:
+        await self.client.room_send(
             room_id=room_id,
             message_type="m.room.message",
-            content=content,
+            content={
+                "msgtype": "m.notice",
+                "body": f"* {text}",
+                "m.new_content": {
+                    "msgtype": "m.notice",
+                    "body": text,
+                },
+                "m.relates_to": {
+                    "rel_type": "m.replace",
+                    "event_id": event_id,
+                },
+            },
         )
-        return getattr(response, "event_id", None)
 
     async def _edit_text_message(self, room_id: str, event_id: str, text: str) -> None:
         md = MarkdownIt("commonmark", {"html": False, "breaks": False})
@@ -461,15 +536,45 @@ class KarlBot(PersonalBot):
                     message: AsyncChatModelStream
 
                     async def consume_reasoning() -> None:
+                        reasoning = ""
+                        reasoning_event_id: str | None = None
+                        last_edit_at = 0.0
+                        min_edit_interval_seconds = 1.0
+
                         async for delta in message.reasoning:
-                            if not delta or not delta.strip():
+                            if not delta:
                                 continue
 
-                            await self._send_notice(
+                            reasoning += delta
+
+                            if not reasoning.strip():
+                                continue
+
+                            now = asyncio.get_running_loop().time()
+                            preview_text = f"[thinking] {reasoning.strip()} ▌"
+
+                            if reasoning_event_id is None:
+                                reasoning_event_id = await self._send_notice(
+                                    room.room_id,
+                                    preview_text,
+                                    thread_root_event_id=thread_root_event_id,
+                                    reply_to_event_id=event.event_id,
+                                )
+                                last_edit_at = now
+                            elif now - last_edit_at >= min_edit_interval_seconds:
+                                await self._edit_notice(
+                                    room.room_id,
+                                    reasoning_event_id,
+                                    preview_text,
+                                )
+                                last_edit_at = now
+
+                        final_reasoning = reasoning.strip()
+                        if final_reasoning and reasoning_event_id is not None:
+                            await self._edit_notice(
                                 room.room_id,
-                                f"[thinking] {delta.strip()}",
-                                thread_root_event_id=thread_root_event_id,
-                                reply_to_event_id=event.event_id,
+                                reasoning_event_id,
+                                f"[thinking] {final_reasoning}",
                             )
 
                     async def consume_text() -> tuple[str, str | None]:

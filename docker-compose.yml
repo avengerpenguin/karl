@@ -1,49 +1,62 @@
-version: '3.8'
-
 services:
-  agent:
+  karl:
     build:
       context: .
-      target: development # Targets our editable dev stage
+      target: development
+      args:
+        PLATFORM: linux/amd64
+        USER: $USERID
+#    user: $UID
+    working_dir: /app
     volumes:
-      # 1. Mount your live code for editable dev loop
+      # Local code for dev
       - .:/app
-      
       # 2. Map host Git credentials so the agent can use your SSH/Git config
       - ~/.gitconfig:/root/.gitconfig:ro
       - ~/.ssh:/root/.ssh:ro
-
       # Mount the glab token/auth configuration
       - ~/.config/glab-cli:/root/.config/glab-cli:ro
-      
       # Mount Obsidian's application support directory so the CLI can see vaults
-      - ~/Library/Application Support/obsidian:/root/.config/obsidian:ro
-
-      # 3. Securely scope the consolidated Obsidian Vault folders
-      - /path/to/my/vault/clippings:/workspace/clippings:ro    # Read-Only
-      - /path/to/my/vault/wiki:/workspace/wiki:rw              # Read-Write
-      - /path/to/my/vault/memories:/workspace/memories:rw      # Read-Write
-      
-      # 4. The Masking Trick for /private
-      # Mounts a completely blank local folder OVER the vault's private folder in the container
-      - ./empty_mask_folder:/workspace/private:ro
-
+      - ~/Library/Application Support/obsidian:$HOME/obsidian:ro
+#      - /path/to/my/vault/clippings:/workspace/clippings:ro    # Read-Only
+#      - /path/to/my/vault/wiki:/workspace/wiki:rw              # Read-Write
+#      - /path/to/my/vault/memories:/workspace/memories:rw      # Read-Write
+      # Blank out things I want to hide
+#      - ./empty_mask_folder:/workspace/private:ro
     environment:
+      - XDG_RUNTIME_DIR=$HOME/.config
       - PYTHONUNBUFFERED=1
-      - OPENAI_API_KEY=${OPENAI_API_KEY} # Passes your keys seamlessly
-    # Overrides standard CMD to replicate your exact terminal command
-    command: python -m your_agent_package 
-
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    networks:
-      - agent-net
-    ports:
-      - "127.0.0.1:4000:4000" # Exposes the proxy dashboard to your Mac
-    volumes:
-      - ./litellm-config.yaml:/app/config.yaml:ro
-    environment:
+      - BEEPER_TOKEN
       - OPENAI_API_KEY
-      - ANTHROPIC_API_KEY
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-  
+      - OPENAI_API_BASE
+      - SLACK_MCP_TOKEN
+      - ATLASSIAN_BASE_URL
+      - ATLASSIAN_USER
+      - ATLASSIAN_API_TOKEN
+      - TEST_NO_REAL
+      - EMAIL_PASSWORD
+      - TODOIST_TOKEN
+      - GITLAB_URL
+      - GITLAB_TOKEN
+      - GOOGLE_API_KEY
+      - TAVILY_API_KEY
+      - CUSTOM_MCP_URLS
+      - MATRIX_HOMESERVER
+      - BOT_USER_ID
+      - MY_MATRIX_ID
+      - BOT_PASSWORD
+    command: python -m karl bot
+
+#  litellm:
+#    image: ghcr.io/berriai/litellm:main-latest
+#    networks:
+#      - agent-net
+#    ports:
+#      - "127.0.0.1:4000:4000" # Exposes the proxy dashboard to your Mac
+#    volumes:
+#      - ./litellm-config.yaml:/app/config.yaml:ro
+#    environment:
+#      - OPENAI_API_KEY
+#      - ANTHROPIC_API_KEY
+#    command: ["--config", "/app/config.yaml", "--port", "4000"]
+#
