@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 # MODEL = "ollama:gemma4:12b-mlx"
 # MODEL = "openai:mlx-community/Qwen3.8-27B-4bit"
 MODEL = ChatOpenAI(
-    base_url="http://localhost:8080/v1",
+    base_url="http://localhost:52/v1",
     api_key="dummy",
     model="mlx-community/gemma-3-4b-pt-4bit",
     temperature=0.3,
@@ -51,7 +51,7 @@ MODEL = ChatOpenAI(
 #     use_responses_api=False,
 # )
 # MODEL = "ollama:gemma4:12b-mlx"
-MODEL = "openai:gpt-5.5"
+MODEL = "openai:gpt-5.6-terra-bedrock"
 MAX_INTERRUPT_CHARS = 12_000
 MAX_MATRIX_NOTICE_CHARS = 20_000
 LARGE_STRING_ARG_CHARS = 200

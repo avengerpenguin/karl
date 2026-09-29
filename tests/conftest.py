@@ -4,6 +4,8 @@ from urllib.parse import urlparse
 
 import pytest
 import yaml
+from karl.mlxproxy.chatmodel import MLXChatModel
+from langchain_core.language_models import BaseChatModel
 from vcr import VCR
 
 
@@ -121,3 +123,17 @@ def vcr_config():
         "ignore_localhost": False,
         "allow_playback_repeats": True,
     }
+
+
+@pytest.fixture(
+    scope="session",
+    params=[
+        "mlx-community/Qwen3.8-27B-4bit",
+        # "mlx-community/gemma-4-12B-mxfp4", TODO: Enable later when HF cache is warm
+    ],
+)
+def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
+    llm = MLXChatModel(
+        model_id=request.param,
+    )
+    return llm

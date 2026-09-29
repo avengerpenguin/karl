@@ -34,10 +34,11 @@ repos:
     hooks:
     - id: pytest
       name: pytest
-      entry: ./venv/bin/pytest tests
+      entry: ./venv/bin/pytest -sx tests
       language: system
       types: [python]
       pass_filenames: false
       always_run: true
+      verbose: true
 default_language_version:
   python: python3.14

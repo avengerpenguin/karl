@@ -130,6 +130,7 @@ def delete_old_messages(state: AgentState, runtime: Runtime) -> dict | None:
 
 async def handle_redirect(auth_url: str) -> None:
     print(f"Visit: {auth_url}")
+    os.system(f"open '{auth_url}'")
 
 
 def _preferred_oauth_callback_port(service: str) -> int:

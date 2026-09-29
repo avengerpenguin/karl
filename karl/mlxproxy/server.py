@@ -16,7 +16,7 @@ try:
     from diffusers import DiffusionPipeline
     from fastapi import FastAPI, HTTPException
     from fastapi.responses import StreamingResponse
-    from mlx_lm import generate, load, stream_generate
+    from mlx_lm import generate, load
     from PIL import Image
     from pydantic import BaseModel, ConfigDict
     from mflux.models.common.config import ModelConfig
@@ -63,7 +63,7 @@ SUPPORTED_IMAGE_MODELS = {
         "quantize": int(os.getenv("KREA2_MFLUX_QUANTIZE", "4")),
         "default_width": 768,
         "default_height": 1024,
-        "default_steps": 12,
+        "default_steps": 8,
         "default_guidance": 1.5,
         "supports_negative_prompt": True,
     },
@@ -99,6 +99,45 @@ DEFAULT_NEGATIVE_PROMPT = (
     "airbrushed, drawing, watermark, text"
 )
 
+text_mlx_executor = ThreadPoolExecutor(max_workers=1)
+image_mlx_executor = ThreadPoolExecutor(max_workers=1)
+
+
+async def run_on_executor(executor: ThreadPoolExecutor, func, *args, **kwargs):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor,
+        lambda: func(*args, **kwargs),
+    )
+
+
+async def run_on_text_mlx_thread(func, *args, **kwargs):
+    return await run_on_executor(text_mlx_executor, func, *args, **kwargs)
+
+
+async def run_on_image_mlx_thread(func, *args, **kwargs):
+    return await run_on_executor(image_mlx_executor, func, *args, **kwargs)
+
+
+def clear_mlx_cache_sync():
+    gc.collect()
+
+    try:
+        mx.clear_cache()
+    except AttributeError:
+        try:
+            mx.metal.clear_cache()
+        except AttributeError:
+            pass
+
+
+def clear_torch_cache_sync():
+    gc.collect()
+
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+        torch.mps.synchronize()
+
 
 class ActiveMlxModel:
     def __init__(self):
@@ -118,8 +157,11 @@ class ActiveMlxModel:
 
     async def acquire_for_request(self, request_id: str):
         self.waiting_requests += 1
-        await self.lock.acquire()
-        self.waiting_requests -= 1
+        try:
+            await self.lock.acquire()
+        finally:
+            self.waiting_requests -= 1
+
         self.active_request_id = request_id
 
     def release_request(self):
@@ -130,16 +172,16 @@ class ActiveMlxModel:
         if self.is_loaded(model_name):
             return self.model, self.tokenizer
 
-        self.unload()
+        await self.unload()
 
         print(f"Loading MLX model: {model_name}")
-        self.model, self.tokenizer = await asyncio.to_thread(load, model_name)
+        self.model, self.tokenizer = await run_on_text_mlx_thread(load, model_name)
         self.model_name = model_name
         print(f"Loaded MLX model: {model_name}")
 
         return self.model, self.tokenizer
 
-    def unload(self):
+    async def unload(self):
         if self.model is None and self.tokenizer is None:
             return
 
@@ -149,12 +191,7 @@ class ActiveMlxModel:
         self.tokenizer = None
         self.model_name = None
 
-        gc.collect()
-
-        try:
-            mx.clear_cache()
-        except AttributeError:
-            pass
+        await run_on_text_mlx_thread(clear_mlx_cache_sync)
 
 
 active_mlx_model = ActiveMlxModel()
@@ -173,8 +210,11 @@ class ActiveImagePipeline:
 
     async def acquire_for_request(self, request_id: str):
         self.waiting_requests += 1
-        await self.lock.acquire()
-        self.waiting_requests -= 1
+        try:
+            await self.lock.acquire()
+        finally:
+            self.waiting_requests -= 1
+
         self.active_request_id = request_id
 
     def release_request(self):
@@ -185,7 +225,7 @@ class ActiveImagePipeline:
         if self.is_loaded(model_name):
             return self.pipeline
 
-        self.unload()
+        await self.unload()
 
         config = SUPPORTED_IMAGE_MODELS[model_name]
 
@@ -217,7 +257,7 @@ class ActiveImagePipeline:
 
         return self.pipeline
 
-    def unload(self):
+    async def unload(self):
         if self.pipeline is None:
             return
 
@@ -226,24 +266,10 @@ class ActiveImagePipeline:
         self.pipeline = None
         self.model_name = None
 
-        gc.collect()
-
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-            torch.mps.synchronize()
+        await asyncio.to_thread(clear_torch_cache_sync)
 
 
 active_image_pipeline = ActiveImagePipeline()
-
-mlx_executor = ThreadPoolExecutor(max_workers=1)
-
-
-async def run_on_mlx_thread(func, *args, **kwargs):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        mlx_executor,
-        lambda: func(*args, **kwargs),
-    )
 
 
 class ActiveMfluxImageModel:
@@ -258,7 +284,7 @@ class ActiveMfluxImageModel:
         if self.is_loaded(model_name):
             return self.model
 
-        self.unload()
+        await self.unload()
 
         config = SUPPORTED_IMAGE_MODELS[model_name]
         model_class = config["model_class"]
@@ -280,15 +306,14 @@ class ActiveMfluxImageModel:
         if model_config_factory is not None:
             constructor_kwargs["model_config"] = model_config_factory()
 
-        self.model = await run_on_mlx_thread(model_class, **constructor_kwargs)
-
+        self.model = await run_on_image_mlx_thread(model_class, **constructor_kwargs)
         self.model_name = model_name
 
         print(f"Loaded mflux image model: {model_name}")
 
         return self.model
 
-    def unload(self):
+    async def unload(self):
         if self.model is None:
             return
 
@@ -297,15 +322,7 @@ class ActiveMfluxImageModel:
         self.model = None
         self.model_name = None
 
-        gc.collect()
-
-        try:
-            mx.clear_cache()
-        except AttributeError:
-            try:
-                mx.metal.clear_cache()
-            except AttributeError:
-                pass
+        await run_on_image_mlx_thread(clear_mlx_cache_sync)
 
 
 active_mflux_image_model = ActiveMfluxImageModel()
@@ -355,9 +372,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    active_mlx_model.unload()
-    active_image_pipeline.unload()
-    active_mflux_image_model.unload()
+    await active_mlx_model.unload()
+    await active_image_pipeline.unload()
+    await active_mflux_image_model.unload()
+
+    text_mlx_executor.shutdown(wait=True, cancel_futures=False)
+    image_mlx_executor.shutdown(wait=True, cancel_futures=False)
 
 
 app = FastAPI(
@@ -437,7 +457,6 @@ def run_image_generation_sync(
     negative_prompt = request.negative_prompt or DEFAULT_NEGATIVE_PROMPT
 
     if model_name == "qwen":
-        active_mlx_model.unload()
         width = request.width if request.width != 1024 else 512
         height = request.height if request.height != 1024 else 768
         steps = request.steps if request.steps != 25 else 10
@@ -617,13 +636,13 @@ async def run_mlx_chat_generate(
         model, tokenizer = await active_mlx_model.load_for_request(model_name)
         prompt = chat_messages_to_prompt(tokenizer, messages)
 
-        return await asyncio.to_thread(
+        return await run_on_text_mlx_thread(
             generate,
             model,
             tokenizer,
             prompt=prompt,
             max_tokens=max_tokens,
-            temp=temperature,
+            # temp=temperature,
             verbose=False,
         )
     finally:
@@ -643,7 +662,7 @@ async def run_mlx_completion_generate(
     try:
         model, tokenizer = await active_mlx_model.load_for_request(model_name)
 
-        return await asyncio.to_thread(
+        return await run_on_text_mlx_thread(
             generate,
             model,
             tokenizer,
@@ -671,7 +690,16 @@ async def health():
         "image": {
             "default_model": DEFAULT_IMAGE_MODEL,
             "supported_models": list(SUPPORTED_IMAGE_MODELS.keys()),
-            "active_model": active_image_pipeline.model_name,
+            "active_model": (
+                active_image_pipeline.model_name or active_mflux_image_model.model_name
+            ),
+            "active_backend": (
+                "diffusers"
+                if active_image_pipeline.model_name is not None
+                else "mflux"
+                if active_mflux_image_model.model_name is not None
+                else None
+            ),
             "busy": active_image_pipeline.lock.locked(),
             "active_request_id": active_image_pipeline.active_request_id,
             "waiting_requests": active_image_pipeline.waiting_requests,
@@ -760,43 +788,48 @@ async def stream_chat_completion_chunks(
 ):
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = now_unix()
-    request_id = uuid.uuid4().hex
 
-    await active_mlx_model.acquire_for_request(request_id)
-    try:
-        model, tokenizer = await active_mlx_model.load_for_request(model_name)
-        prompt = chat_messages_to_prompt(tokenizer, messages)
+    content = await run_mlx_chat_generate(
+        model_name=model_name,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
-        for chunk in stream_generate(
-            model,
-            tokenizer,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            # temp=temperature,
-        ):
-            text = getattr(chunk, "text", str(chunk))
-
-            payload = {
-                "id": completion_id,
-                "object": "chat.completion.chunk",
-                "created": created,
-                "model": model_name,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {
-                            "content": text,
-                        },
-                        "finish_reason": None,
-                    }
-                ],
+    payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "content": content,
+                },
+                "finish_reason": None,
             }
+        ],
+    }
 
-            yield f"data: {json.dumps(payload)}\n\n"
+    yield f"data: {json.dumps(payload)}\n\n"
 
-        yield "data: [DONE]\n\n"
-    finally:
-        active_mlx_model.release_request()
+    done_payload = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    yield f"data: {json.dumps(done_payload)}\n\n"
+    yield "data: [DONE]\n\n"
 
 
 async def stream_completion_chunks(
@@ -809,34 +842,44 @@ async def stream_completion_chunks(
     completion_id = f"cmpl-{uuid.uuid4().hex}"
     created = now_unix()
 
-    async with active_mlx_model.lock:
-        model, tokenizer = await active_mlx_model.load_for_request(model_name)
+    text = await run_mlx_completion_generate(
+        model_name=model_name,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
 
-        for chunk in stream_generate(
-            model,
-            tokenizer,
-            prompt=prompt,
-            max_tokens=max_tokens,
-            temp=temperature,
-        ):
-            text = getattr(chunk, "text", str(chunk))
-
-            payload = {
-                "id": completion_id,
-                "object": "text_completion",
-                "created": created,
-                "model": model_name,
-                "choices": [
-                    {
-                        "index": 0,
-                        "text": text,
-                        "finish_reason": None,
-                    }
-                ],
+    payload = {
+        "id": completion_id,
+        "object": "text_completion",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "text": text,
+                "finish_reason": None,
             }
+        ],
+    }
 
-            yield f"data: {json.dumps(payload)}\n\n"
+    yield f"data: {json.dumps(payload)}\n\n"
 
+    done_payload = {
+        "id": completion_id,
+        "object": "text_completion",
+        "created": created,
+        "model": model_name,
+        "choices": [
+            {
+                "index": 0,
+                "text": "",
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    yield f"data: {json.dumps(done_payload)}\n\n"
     yield "data: [DONE]\n\n"
 
 
@@ -849,12 +892,11 @@ async def image_generate(request: ImageGenerationRequest):
 
     try:
         if SUPPORTED_IMAGE_MODELS[model_name].get("backend") == "mflux":
-            active_mlx_model.unload()
-            active_image_pipeline.unload()
+            await active_image_pipeline.unload()
 
             model = await active_mflux_image_model.load_for_request(model_name)
 
-            image = await run_on_mlx_thread(
+            image = await run_on_image_mlx_thread(
                 run_mflux_image_generation_sync,
                 model,
                 model_name,
@@ -866,7 +908,7 @@ async def image_generate(request: ImageGenerationRequest):
                 media_type="image/png",
             )
 
-        active_mflux_image_model.unload()
+        await active_mflux_image_model.unload()
 
         pipe = await active_image_pipeline.load_for_request(model_name)
 
@@ -894,4 +936,4 @@ async def image_generate(request: ImageGenerationRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=5276)
+    uvicorn.run(app, host="0.0.0.0", port=5276, workers=1, timeout_keep_alive=3600)

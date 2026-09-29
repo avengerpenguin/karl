@@ -7,9 +7,6 @@ RUN apt-get update \
 ARG USER
 USER $USER
 
-RUN which obsidian
-RUN obsidian --no-sandbox --user-data-dir=/tmp --disable-setuid-sandbox vaults
-
 FROM base AS development
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e '.[imap,beeper,todoist,gitlab,jira,confluence,tavily,matrix]'

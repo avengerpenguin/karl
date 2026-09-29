@@ -2,22 +2,13 @@ from textwrap import dedent
 
 from deepagents import create_deep_agent
 from deepagents.backends.protocol import GrepResult, GrepMatch, WriteResult
+from karl.mlxproxy.chatmodel import MLXChatModel
 from karl.obsidian.backends import ObsidianBackend
 from langchain.agents import create_agent
 from deepagents.middleware import FilesystemMiddleware
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
-
-
-MODEL = ChatOpenAI(
-    base_url="http://localhost:5276/v1",
-    api_key="dummy",
-    model="mlx-community/Qwen3.8-27B-4bit",
-    temperature=0.3,
-    streaming=True,
-    stream_chunk_timeout=600,
-    timeout=900,
-)
 
 
 def test_ls():
@@ -159,13 +150,13 @@ def test_edit_on_non_existent_file():
     ]
 
 
-def test_agent_memory():
+def test_agent_memory(chat_model: str | BaseChatModel):
     agent1 = create_deep_agent(
         system_prompt=dedent("""\
             All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
             The filesystem knowledge base should be maintained as you execute tasks.
         """),
-        model=MODEL,
+        model=chat_model,
         memory=["/AGENTS.md"],
         backend=ObsidianBackend(vault="Test Vault"),
     )
@@ -178,7 +169,7 @@ def test_agent_memory():
             All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
             The filesystem knowledge base should be maintained as you execute tasks.
         """),
-        model=MODEL,
+        model=chat_model,
         memory=["/AGENTS.md"],
         backend=ObsidianBackend(vault="Test Vault"),
     )
