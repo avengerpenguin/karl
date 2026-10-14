@@ -3,19 +3,20 @@ import hashlib
 import json
 import logging
 import re
+from types import CoroutineType
+from typing import Callable, Any
 
 from langchain_core.language_models.chat_model_stream import AsyncChatModelStream
 from langchain_core.messages import (
     HumanMessage,
     AIMessage,
 )
-from langchain_openai import ChatOpenAI
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt._tool_call_stream import ToolCallStream
 from langgraph.stream import AsyncGraphRunStream, StreamChannel
-from langgraph.types import Command
+from langgraph.types import Command, StateT, OutputT
+from langgraph.typing import ContextT, InputT
 from typing_extensions import override
-from .agents.autodidact import create as create_autodidact_agent
-from .agents.tracer import ConsoleTraceHandler
 
 try:
     from nio import MatrixRoom, RoomMessageText
@@ -32,15 +33,15 @@ logging.basicConfig(level=logging.INFO)
 # MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
 # MODEL = "ollama:gemma4:12b-mlx"
 # MODEL = "openai:mlx-community/Qwen3.8-27B-4bit"
-MODEL = ChatOpenAI(
-    base_url="http://localhost:52/v1",
-    api_key="dummy",
-    model="mlx-community/gemma-3-4b-pt-4bit",
-    temperature=0.3,
-    streaming=True,
-    stream_chunk_timeout=900,
-    timeout=900,
-)
+# MODEL = ChatOpenAI(
+#     base_url="http://localhost:52/v1",
+#     api_key="dummy",
+#     model="mlx-community/gemma-3-4b-pt-4bit",
+#     temperature=0.3,
+#     streaming=True,
+#     stream_chunk_timeout=900,
+#     timeout=900,
+# )
 # MODEL = "openai:gemini-3.8-flash"
 # MODEL = ChatOpenAI(
 #     model=os.getenv("KARL_MODEL", "gpt-5.5"),
@@ -51,7 +52,9 @@ MODEL = ChatOpenAI(
 #     use_responses_api=False,
 # )
 # MODEL = "ollama:gemma4:12b-mlx"
-MODEL = "openai:gpt-5.6-terra-bedrock"
+# MODEL = "openai:claude-auto"
+# MODEL = MLXChatModel(model_id="mlx-community/Qwen2.5-Coder-7B-Instruct-4bit")
+
 MAX_INTERRUPT_CHARS = 12_000
 MAX_MATRIX_NOTICE_CHARS = 20_000
 LARGE_STRING_ARG_CHARS = 200
@@ -75,6 +78,20 @@ def _get_thread_root_event_id(event: RoomMessageText) -> str:
 
 
 class KarlBot(PersonalBot):
+    def __init__(
+        self,
+        agent_factory: Callable[
+            [],
+            CoroutineType[
+                Any, Any, CompiledStateGraph[StateT, ContextT, InputT, OutputT]
+            ],
+        ],
+        *args,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self.agent_factory = agent_factory
+
     def _agent_thread_id(self, room_id: str, thread_root_event_id: str) -> str:
         raw = f"{room_id}:{thread_root_event_id}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -474,7 +491,7 @@ class KarlBot(PersonalBot):
 
     @override
     async def generate_reply(self, room: MatrixRoom, event: RoomMessageText) -> None:
-        agent = await create_autodidact_agent(MODEL)
+        agent = await self.agent_factory()
 
         thread_root_event_id = _get_thread_root_event_id(event)
         agent_thread_id = self._agent_thread_id(room.room_id, thread_root_event_id)
@@ -483,8 +500,11 @@ class KarlBot(PersonalBot):
                 "thread_id": agent_thread_id,
                 "matrix_room_id": room.room_id,
                 "matrix_thread_root_event_id": thread_root_event_id,
+                "profile_override": {
+                    "max_input_tokens": 1000000  # Sets the trigger to ~850k tokens
+                },
             },
-            "callbacks": [ConsoleTraceHandler()],
+            # "callbacks": [ConsoleTraceHandler()],
             "tags": ["matrix", "karlbot"],
             "metadata": {
                 "room_id": room.room_id,
@@ -539,7 +559,7 @@ class KarlBot(PersonalBot):
                         reasoning = ""
                         reasoning_event_id: str | None = None
                         last_edit_at = 0.0
-                        min_edit_interval_seconds = 1.0
+                        min_edit_interval_seconds = 5.0
 
                         async for delta in message.reasoning:
                             if not delta:
@@ -581,7 +601,7 @@ class KarlBot(PersonalBot):
                         text = ""
                         message_event_id: str | None = None
                         last_edit_at = 0.0
-                        min_edit_interval_seconds = 1.0
+                        min_edit_interval_seconds = 5.0
 
                         async for delta in message.text:
                             if not delta:

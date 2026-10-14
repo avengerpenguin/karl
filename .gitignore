@@ -4,3 +4,8 @@ venv
 .envrc.local
 __pycache__
 .idea
+.memory
+.karl
+build
+.store
+/*.yaml

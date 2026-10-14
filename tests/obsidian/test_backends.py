@@ -151,28 +151,40 @@ def test_edit_on_non_existent_file():
 
 
 def test_agent_memory(chat_model: str | BaseChatModel):
+    memory_system_prompt = dedent("""\
+        You are testing a filesystem-backed memory system.
+
+        You have filesystem tools. You must use them.
+
+        Memory rules:
+        1. Long-term user facts are stored in /AGENTS.md.
+        2. If the user asks you to remember a fact, you must write or edit /AGENTS.md.
+        3. If the user asks about a remembered fact, you must read or search /AGENTS.md before answering.
+        4. Do not answer "None needed" when the user asks you to remember or retrieve a fact.
+        5. Do not rely only on chat history for remembered facts. Use the filesystem memory.
+        6. After saving a memory, briefly confirm what was saved.
+        7. When retrieving a memory, answer with the remembered value.
+    """)
+
+    backend = ObsidianBackend(vault="Test Vault")
     agent1 = create_deep_agent(
-        system_prompt=dedent("""\
-            All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
-            The filesystem knowledge base should be maintained as you execute tasks.
-        """),
+        system_prompt=memory_system_prompt,
         model=chat_model,
         memory=["/AGENTS.md"],
-        backend=ObsidianBackend(vault="Test Vault"),
+        backend=backend,
     )
     response1 = agent1.invoke(
         dict(messages=[HumanMessage("Remember a fact about me: my favourite colour is purple. Save this as a memory.")])
     )
+    print(response1['messages'][-1])
+    assert "purple" in backend.read("/AGENTS.md").file_data["content"].lower()
 
     agent2 = create_deep_agent(
-        system_prompt=dedent("""\
-            All memories, context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
-            The filesystem knowledge base should be maintained as you execute tasks.
-        """),
+        system_prompt=memory_system_prompt,
         model=chat_model,
         memory=["/AGENTS.md"],
-        backend=ObsidianBackend(vault="Test Vault"),
+        backend=backend,
     )
-    response2 = agent2.invoke(dict(messages=[HumanMessage("Check your filesystem memories. What is my favourite colour?")]))
+    response2 = agent2.invoke(dict(messages=[HumanMessage("What is my favourite colour?")]))
     ai_message: AIMessage = response2['messages'][-1]
     assert 'purple' in ai_message.text.lower()

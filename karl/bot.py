@@ -52,7 +52,7 @@ class PersonalBot(abc.ABC):
         self.allow_room_creation = allow_room_creation
 
     async def message_callback(self, room: MatrixRoom, event: RoomMessageText) -> None:
-        print(f"{event.sender}: {event.body}", file=sys.stderr)
+        # print(f"{event.sender}: {event.body}", file=sys.stderr)
 
         if event.sender != self.my_user_id:
             return

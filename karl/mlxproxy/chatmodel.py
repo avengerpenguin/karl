@@ -24,7 +24,6 @@ try:
 except ImportError:
     raise ImportError("Please install karl[mlx] to use MLX proxy server")
 
-
 DEFAULT_MLX_CHAT_MODEL = os.getenv(
     "MLX_DEFAULT_MODEL",
     "mlx-community/Qwen2.5-7B-Instruct-4bit",
@@ -101,8 +100,15 @@ def _content_to_text(content: Any) -> str:
 def _to_mlx_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
     converted: list[dict[str, Any]] = []
 
+    role_map = {
+        "human": "user",
+        "ai": "assistant",
+        "system": "system",
+        "tool": "tool",
+    }
+
     for message in messages:
-        role = message.type
+        role = role_map.get(message.type, message.type)
         content = _content_to_text(message.content)
 
         if isinstance(message, AIMessage) and message.tool_calls:
@@ -194,6 +200,74 @@ def _stream_response_text(response: Any) -> str:
     return str(response)
 
 
+def _parse_tool_calls(
+    text: str,
+    tools: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not tools:
+        return []
+
+    allowed_tool_names = {
+        tool.get("function", {}).get("name")
+        for tool in tools
+        if tool.get("function", {}).get("name")
+    }
+
+    parsed = _extract_json(text)
+    if not parsed:
+        return []
+
+    raw_calls: Any
+
+    if isinstance(parsed, dict) and isinstance(parsed.get("tool_calls"), list):
+        raw_calls = parsed["tool_calls"]
+    elif isinstance(parsed, dict) and parsed.get("name"):
+        raw_calls = [parsed]
+    elif isinstance(parsed, list):
+        raw_calls = parsed
+    else:
+        return []
+
+    tool_calls: list[dict[str, Any]] = []
+
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+
+        name = raw_call.get("name")
+        args = (
+            raw_call.get("args")
+            if "args" in raw_call
+            else raw_call.get("arguments", {})
+        )
+
+        if name not in allowed_tool_names:
+            continue
+
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {"input": args}
+
+        if args is None:
+            args = {}
+
+        if not isinstance(args, dict):
+            args = {"input": args}
+
+        tool_calls.append(
+            {
+                "name": name,
+                "args": args,
+                "id": raw_call.get("id") or f"call_{uuid.uuid4().hex}",
+                "type": "tool_call",
+            }
+        )
+
+    return tool_calls
+
+
 class MLXChatModel(BaseChatModel):
     """LangChain chat model wrapper for local in-process mlx-lm models.
 
@@ -228,7 +302,12 @@ class MLXChatModel(BaseChatModel):
 
     def _ensure_loaded(self) -> None:
         if self._model is None or self._tokenizer is None:
-            self._model, self._tokenizer = load(self.model_id)
+            self._model, self._tokenizer = load(
+                self.model_id,
+                tokenizer_config={
+                    "fix_mistral_regex": True,
+                },
+            )
 
     def bind_tools(
         self,
@@ -236,7 +315,7 @@ class MLXChatModel(BaseChatModel):
         *,
         tool_choice: str | dict[str, Any] | bool | None = None,
         **kwargs: Any,
-    ) -> Runnable[LanguageModelInput, BaseMessage]:
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         """Bind tools in the shape expected by LangChain agents.
 
         `create_agent()` calls this method when tools are provided. Provider-backed
@@ -281,7 +360,7 @@ class MLXChatModel(BaseChatModel):
         )
 
         response_text = _apply_stop(response_text, stop)
-        tool_calls = self._parse_tool_calls(response_text, tools)
+        tool_calls = _parse_tool_calls(response_text, tools)
 
         if tool_calls:
             message = AIMessage(content="", tool_calls=tool_calls)
@@ -370,9 +449,9 @@ class MLXChatModel(BaseChatModel):
 
     def _generation_kwargs(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         max_tokens = kwargs.pop("max_tokens", self.max_tokens)
-        verbose = kwargs.pop("verbose", self.verbose)
 
         # Consume unsupported sampling aliases so they cannot leak into mlx-lm.
+        kwargs.pop("verbose", None)
         kwargs.pop("temperature", None)
         kwargs.pop("temp", None)
 
@@ -383,7 +462,6 @@ class MLXChatModel(BaseChatModel):
 
         generation_kwargs = {
             "max_tokens": max_tokens,
-            "verbose": verbose,
         }
 
         # Only forward known mlx-lm kwargs if you intentionally support them.
@@ -430,71 +508,3 @@ class MLXChatModel(BaseChatModel):
                 pass
 
         return _plain_transcript_prompt(mlx_messages)
-
-    def _parse_tool_calls(
-        self,
-        text: str,
-        tools: list[dict[str, Any]] | None,
-    ) -> list[dict[str, Any]]:
-        if not tools:
-            return []
-
-        allowed_tool_names = {
-            tool.get("function", {}).get("name")
-            for tool in tools
-            if tool.get("function", {}).get("name")
-        }
-
-        parsed = _extract_json(text)
-        if not parsed:
-            return []
-
-        raw_calls: Any
-
-        if isinstance(parsed, dict) and isinstance(parsed.get("tool_calls"), list):
-            raw_calls = parsed["tool_calls"]
-        elif isinstance(parsed, dict) and parsed.get("name"):
-            raw_calls = [parsed]
-        elif isinstance(parsed, list):
-            raw_calls = parsed
-        else:
-            return []
-
-        tool_calls: list[dict[str, Any]] = []
-
-        for raw_call in raw_calls:
-            if not isinstance(raw_call, dict):
-                continue
-
-            name = raw_call.get("name")
-            args = (
-                raw_call.get("args")
-                if "args" in raw_call
-                else raw_call.get("arguments", {})
-            )
-
-            if name not in allowed_tool_names:
-                continue
-
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args)
-                except json.JSONDecodeError:
-                    args = {"input": args}
-
-            if args is None:
-                args = {}
-
-            if not isinstance(args, dict):
-                args = {"input": args}
-
-            tool_calls.append(
-                {
-                    "name": name,
-                    "args": args,
-                    "id": raw_call.get("id") or f"call_{uuid.uuid4().hex}",
-                    "type": "tool_call",
-                }
-            )
-
-        return tool_calls

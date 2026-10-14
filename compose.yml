@@ -1,0 +1,36 @@
+services:
+  karl:
+    build:
+      context: .
+      target: development
+      args:
+        PLATFORM: linux/amd64
+        USER: $USERID
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - XDG_RUNTIME_DIR=$HOME/.config
+      - PYTHONUNBUFFERED=1
+      - DOCKER_HOST=tcp://docker:2375
+      - TESTCONTAINERS_HOST_OVERRIDE=docker
+      - HOME=/workspace
+    depends_on:
+      docker:
+        condition: service_healthy
+    command: python -m karl bot
+    restart: on-failure
+    ports:
+      - "127.0.0.1:18000-18015:18000-18015"
+
+  docker:
+    image: docker:28-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s

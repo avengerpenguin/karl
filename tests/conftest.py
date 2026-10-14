@@ -1,5 +1,6 @@
 import json
 from json import JSONDecodeError
+from textwrap import dedent
 from urllib.parse import urlparse
 
 import pytest
@@ -127,10 +128,14 @@ def vcr_config():
 
 @pytest.fixture(
     scope="session",
-    params=[
-        "mlx-community/Qwen3.8-27B-4bit",
-        # "mlx-community/gemma-4-12B-mxfp4", TODO: Enable later when HF cache is warm
-    ],
+    params=dedent("""\
+        mlx-community/Qwen2.5-1.5B-Instruct-4bit
+        mlx-community/Qwen2.5-3B-Instruct-4bit
+        mlx-community/Qwen2.5-7B-Instruct-4bit
+        mlx-community/Qwen3.8-27B-4bit
+    """)
+    .strip()
+    .splitlines(),
 )
 def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
     llm = MLXChatModel(

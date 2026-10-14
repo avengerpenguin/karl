@@ -1,0 +1,7 @@
+*.egg-info
+venv
+.direnv
+.memory
+.karl
+tests
+/*.yaml
