@@ -24,7 +24,6 @@ from ..tools.cv import fetch_cv
 from .tools import (
     find_latest_non_replied_chat,
     find_past_reply_examples,
-    save_draft_message,
 )
 
 
@@ -34,7 +33,6 @@ def create(model: str | BaseChatModel = "ollama:qwen3:14b"):
         [
             find_latest_non_replied_chat,
             find_past_reply_examples,
-            save_draft_message,
             fetch_cv,
         ],
         system_prompt=dedent("""\

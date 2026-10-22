@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timezone
+from functools import lru_cache
 
 try:
     from beeper_desktop_api import AsyncBeeperDesktop
@@ -8,6 +9,27 @@ except ImportError:
     raise ImportError("Please install karl[beeper] to use LinkedIn tools")
 from langchain_core.tools import tool
 from pydantic import BaseModel
+
+
+@lru_cache(maxsize=1)
+def _client() -> AsyncBeeperDesktop:
+    """Shared Beeper client.
+
+    base_url comes from BEEPER_DESKTOP_BASE_URL, which should point at
+    http://host.docker.internal:23373 when running inside Docker.
+    """
+    token = os.getenv("BEEPER_TOKEN")
+    if not token:
+        raise RuntimeError(
+            "BEEPER_TOKEN is not set - pass it into the container environment"
+        )
+    base_url = os.getenv("BEEPER_DESKTOP_BASE_URL")
+    if not base_url:
+        raise RuntimeError(
+            "BEEPER_DESKTOP_BASE_URL is not set - inside Docker this must be "
+            "http://host.docker.internal:23373, not localhost"
+        )
+    return AsyncBeeperDesktop(access_token=token, base_url=base_url)
 
 
 class ChatMessage(BaseModel):
@@ -56,9 +78,7 @@ async def find_latest_non_replied_chat() -> LinkedInChat | None:
     Response will include the date and time and age of the message to help understand how fresh it is.
     """
 
-    client = AsyncBeeperDesktop(
-        access_token=os.getenv("BEEPER_TOKEN"),
-    )
+    client = _client()
 
     async for chat in client.chats.list(
         account_ids=["linkedin"],
@@ -96,9 +116,7 @@ async def find_past_reply_examples() -> list[LinkedInChat]:
     Returns a series of chat instances that comprise a series of messages where the sender is either
     the user or a recruiter.
     """
-    client = AsyncBeeperDesktop(
-        access_token=os.getenv("BEEPER_TOKEN"),
-    )
+    client = _client()
 
     async def generate_chats():
         examples_found = 0
@@ -134,13 +152,13 @@ async def find_past_reply_examples() -> list[LinkedInChat]:
     return [c async for c in generate_chats()]
 
 
-@tool
-async def save_draft_message(draft_linkedin_message: str) -> str:
-    """
-    Save a draft message to send on LinkedIn.
-    Once the user is happy with the draft message, save it and they will send it.
-    """
-    with open("linkedin_draft.txt", "w") as f:
-        f.write(draft_linkedin_message.strip() + "\n")
-
-    return "Draft saved"
+# @tool
+# async def save_draft_message(draft_linkedin_message: str) -> str:
+#     """
+#     Save a draft message to send on LinkedIn.
+#     Once the user is happy with the draft message, save it and they will send it.
+#     """
+#     with open("linkedin_draft.txt", "w") as f:
+#         f.write(draft_linkedin_message.strip() + "\n")
+#
+#     return "Draft saved"

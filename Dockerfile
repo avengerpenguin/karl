@@ -1,7 +1,7 @@
 FROM python:3.14-slim AS base
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y git maven openjdk-21-jdk gawk glab pre-commit pipx npm graphviz \
+    && apt-get install -y curl git maven openjdk-21-jdk gawk glab pre-commit pipx npm graphviz ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install analytics-mcp

@@ -1,12 +1,13 @@
 import os
 import sys
+import traceback
 from pathlib import Path
 from textwrap import dedent
 
 import tiktoken
 
 from deepagents import create_deep_agent
-from deepagents.backends import LocalShellBackend
+from deepagents.backends import LocalShellBackend, CompositeBackend, StateBackend
 from langchain.agents.middleware import (
     ToolErrorMiddleware,
     HumanInTheLoopMiddleware,
@@ -55,17 +56,21 @@ from ..jira.tools import (
 from ..linkedin.tools import (
     find_latest_non_replied_chat,
     find_past_reply_examples,
-    save_draft_message,
 )
 from ..slack.tools import get_tools as get_slack_tools
 from ..sql.tools import get_database_tools
 from ..tools import http, search, cv
+from ..tools.amazon import search_amazon_products_with_affiliate_links
 from ..tools.custom_mcp import get_custom_mcp_tools
 
 
 def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
     error_message = f"`{request.tool_call['name']}` failed with {type(exc).__name__}. Full info: {exc}"
+    detail = getattr(exc, "body", None) or getattr(exc, "response", None)
+    if detail is not None:
+        error_message += f" | status={getattr(exc, 'status_code', '?')} body={detail}"
     print(f"WARNING: Tool failure: {error_message}", file=sys.stderr)
+    traceback.print_exception(exc, file=sys.stderr)
     return error_message
 
 
@@ -120,6 +125,7 @@ async def create(model: BaseChatModel | str):
     return create_deep_agent(
         model=model,
         tools=[
+            search_amazon_products_with_affiliate_links,
             list_folders,
             search_emails,
             fetch_email,
@@ -129,7 +135,6 @@ async def create(model: BaseChatModel | str):
             # list_todoist_tasks,
             find_latest_non_replied_chat,
             find_past_reply_examples,
-            save_draft_message,
             cv.fetch_cv,
             get_gitlab_merge_requests_created_by_user,
             get_gitlab_reviews_requested_for_user,
@@ -313,7 +318,18 @@ async def create(model: BaseChatModel | str):
             ),
         ],
         checkpointer=checkpointer,
-        backend=LocalShellBackend(root_dir="/workspace"),
-        memory=["/AGENTS.md"],
-        skills=["/skills/"],
+        backend=CompositeBackend(
+            default=LocalShellBackend(
+                root_dir=str(Path.home()),
+                virtual_mode=False,
+                inherit_env=True,
+                timeout=1800,
+            ),
+            routes={
+                "/conversation_history/": StateBackend(),
+                "/large_tool_results/": StateBackend(),
+            },
+        ),
+        memory=[str(Path.home() / "AGENTS.md")],
+        skills=[str(Path.home() / "skills")],
     )

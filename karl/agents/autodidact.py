@@ -55,7 +55,6 @@ from ..jira.tools import (
 from ..linkedin.tools import (
     find_latest_non_replied_chat,
     find_past_reply_examples,
-    save_draft_message,
 )
 from ..obsidian.backends import ObsidianBackend
 from ..obsidian.tools import (
@@ -161,7 +160,6 @@ async def create(model: BaseChatModel | str):
             # list_todoist_tasks,
             find_latest_non_replied_chat,
             find_past_reply_examples,
-            save_draft_message,
             cv.fetch_cv,
             get_gitlab_merge_requests_created_by_user,
             get_gitlab_reviews_requested_for_user,

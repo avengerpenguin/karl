@@ -14,7 +14,7 @@ from .agents.todo import create as create_todo_agent
 from .agents.general import create as create_general_agent
 from .job import review_job_ad
 
-DEFAULT_MODEL = "openai:gpt-5.6-sol"
+DEFAULT_MODEL = "openai:gpt-5.6"
 app = typer.Typer()
 
 
