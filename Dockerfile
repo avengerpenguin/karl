@@ -4,8 +4,6 @@ RUN apt-get update \
     && apt-get install -y curl git maven openjdk-21-jdk gawk glab pre-commit pipx npm graphviz ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install analytics-mcp
-
 FROM base AS development
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e '.[imap,beeper,todoist,gitlab,jira,confluence,tavily,matrix,mysql,google]'

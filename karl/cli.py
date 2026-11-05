@@ -73,7 +73,7 @@ async def bot(model: str = DEFAULT_MODEL):
         streaming=True,
         stream_chunk_timeout=900,
         timeout=900,
-        use_responses_api=True,
+        use_responses_api=False,
     )
 
     avatar_url = "https://static.wikia.nocookie.net/simpsons/images/1/18/Karl2.png/revision/latest"

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
 from mcp.client.auth import TokenStorage
@@ -104,10 +105,20 @@ async def handle_redirect(auth_url: str) -> None:
         os.system(f"open '{auth_url}'")
 
 
+class OAuthCallbackResult(NamedTuple):
+    """Has attributes for newer MCP SDKs (`result.state`, `result.iss`) and still unpacks for older ones."""
+
+    code: str
+    state: str | None
+    iss: str | None = (
+        None  # RFC 9207 issuer, checked against the server's metadata by newer SDKs
+    )
+
+
 def make_handle_callback(port: int):
-    async def handle_callback() -> tuple[str, str | None]:
+    async def handle_callback() -> OAuthCallbackResult:
         loop = asyncio.get_running_loop()
-        callback_received: asyncio.Future[tuple[str, str | None]] = loop.create_future()
+        callback_received: asyncio.Future[OAuthCallbackResult] = loop.create_future()
 
         async def handle_request(
             reader: asyncio.StreamReader,
@@ -126,9 +137,10 @@ def make_handle_callback(port: int):
                 params = parse_qs(urlparse(target).query)
                 code = params["code"][0]
                 state = params.get("state", [None])[0]
+                iss = params.get("iss", [None])[0]
 
                 if not callback_received.done():
-                    callback_received.set_result((code, state))
+                    callback_received.set_result(OAuthCallbackResult(code, state, iss))
 
                 body = "OAuth callback received. You can close this tab."
                 status = "200 OK"
