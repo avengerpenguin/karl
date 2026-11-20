@@ -1,0 +1,6 @@
+FROM quay.io/jupyter/scipy-notebook:latest
+
+RUN pip install --no-cache-dir \
+      jupyter-mcp-server \
+      jupyter-collaboration \
+      ipykernel

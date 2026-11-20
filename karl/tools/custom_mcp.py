@@ -162,6 +162,7 @@ def _attach_oauth(mcp_config: dict[str, Connection]) -> None:
 
 
 async def get_custom_mcp_tools() -> list[BaseTool]:
-    mcp_config = json.loads(os.getenv("CUSTOM_MCP_URLS", "{}"))
+    # Expand ${VAR} references (e.g. ${JUPYTER_TOKEN}) so secrets needn't be inlined in the JSON
+    mcp_config = json.loads(os.path.expandvars(os.getenv("CUSTOM_MCP_URLS", "{}")))
     _attach_oauth(mcp_config)
     return await load_mcp_tools_isolated(mcp_config, tool_name_prefix=True)

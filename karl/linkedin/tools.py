@@ -23,7 +23,7 @@ def _client() -> AsyncBeeperDesktop:
         raise RuntimeError(
             "BEEPER_TOKEN is not set - pass it into the container environment"
         )
-    base_url = os.getenv("BEEPER_DESKTOP_BASE_URL")
+    base_url = os.getenv("BEEPER_DESKTOP_BASE_URL", "http://localhost:23373")
     if not base_url:
         raise RuntimeError(
             "BEEPER_DESKTOP_BASE_URL is not set - inside Docker this must be "

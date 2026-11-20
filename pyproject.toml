@@ -19,8 +19,6 @@ dependencies = [
     "markdown-it-py",
     "langgraph-checkpoint-sqlite",
     "aiosqlite",
-    "mlx-lm",
-    "mlx",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +51,7 @@ test = [
     "pytest-asyncio",
     "pytest-recording",
     "testcontainers",
+    "textutils",
 ]
 
 [tool.pytest]

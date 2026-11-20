@@ -1,4 +1,6 @@
 import json
+import socket
+from functools import cache
 from json import JSONDecodeError
 from textwrap import dedent
 from urllib.parse import urlparse
@@ -6,21 +8,40 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 from karl.mlxproxy.chatmodel import MLXChatModel
+
 from langchain_core.language_models import BaseChatModel
+from langchain_openai import ChatOpenAI
 from vcr import VCR
 
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+MLX_GATEWAY_HOST = "127.0.0.1"
+MLX_GATEWAY_PORT = 5276
+LOCAL_PORTS = {MLX_GATEWAY_PORT}
 
-OLLAMA_HOSTS = {"localhost", "127.0.0.1", "::1"}
-LOCAL_PORTS = {11434, 8080, 5276}
 
-
-def ignore_ollama_request(request):
+def ignore_local_request(request):
+    """Don't record requests to local LLM servers into cassettes."""
     parsed = urlparse(request.uri)
     return (
         None
-        if parsed.hostname in OLLAMA_HOSTS and parsed.port in LOCAL_PORTS
+        if parsed.hostname in LOCAL_HOSTS and parsed.port in LOCAL_PORTS
         else request
     )
+
+
+@cache
+def mlx_gateway_available(
+    host: str = MLX_GATEWAY_HOST,
+    port: int = MLX_GATEWAY_PORT,
+    timeout: float = 0.5,
+) -> bool:
+    """Return True if something is listening on the MLX gateway port."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except (OSError, RuntimeError):
+        # RuntimeError covers pytest-recording's --block-network socket guard
+        return False
 
 
 class PrettyJsonYamlDumper(yaml.SafeDumper):
@@ -119,7 +140,7 @@ def vcr_config():
     return {
         "filter_headers": ["authorization", "x-stainless-retry-count"],
         "serializer": "yaml",
-        "before_record_request": ignore_ollama_request,
+        "before_record_request": ignore_local_request,
         "before_record_response": pretty_print_json_body,
         "ignore_localhost": False,
         "allow_playback_repeats": True,
@@ -138,7 +159,18 @@ def vcr_config():
     .splitlines(),
 )
 def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
-    llm = MLXChatModel(
-        model_id=request.param,
-    )
+    if mlx_gateway_available():
+        # The OpenAI-compatible MLX gateway handles locking, so only one
+        # generation runs at a time and the model is loaded only once.
+        llm = ChatOpenAI(
+            base_url=f"http://{MLX_GATEWAY_HOST}:{MLX_GATEWAY_PORT}/v1",
+            api_key="dummy",
+            model=request.param,
+        )
+    else:
+        # Self-contained fallback with no network needed. It loads the model
+        # in this process, so only use it when the gateway isn't running.
+        llm = MLXChatModel(
+            model_id=request.param,
+        )
     return llm
