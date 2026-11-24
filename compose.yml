@@ -34,3 +34,13 @@ services:
       timeout: 5s
       retries: 30
       start_period: 10s
+
+  sanban-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.sanban
+    command: sanban --port 8900
+    ports:
+      - "8900:8900"
+    volumes:
+      - $HOME/.sanban:$HOME/.sanban

@@ -22,7 +22,6 @@ RUN apt-get update && \
       terraform \
     && rm -rf /var/lib/apt/lists/*
 
-
 FROM base AS development
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir -e '.[imap,beeper,todoist,gitlab,jira,confluence,tavily,matrix,mysql,google]'
