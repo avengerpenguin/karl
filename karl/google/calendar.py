@@ -29,8 +29,10 @@ def _callback_port() -> int:
 
 
 def _google_credentials() -> Credentials:
-    token_file = Path(os.getenv("KARL_GOOGLE_TOKEN_FILE", "token.json"))
-    client_secrets_file = os.getenv("KARL_GOOGLE_CLIENT_SECRETS", "credentials.json")
+    token_file = Path(os.getenv("KARL_GOOGLE_TOKEN_FILE", ".karl/token.json"))
+    client_secrets_file = os.getenv(
+        "KARL_GOOGLE_CLIENT_SECRETS", ".karl/credentials.json"
+    )
 
     creds: Credentials | None = None
     if token_file.exists():

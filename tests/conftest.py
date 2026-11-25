@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import json
 import socket
 from functools import cache
@@ -7,24 +9,49 @@ from urllib.parse import urlparse
 
 import pytest
 import yaml
-from karl.mlxproxy.chatmodel import MLXChatModel
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from vcr import VCR
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-MLX_GATEWAY_HOST = "127.0.0.1"
+DOCKERHUB_HOSTS = {
+    "auth.docker.io",
+    "index.docker.io",
+    "registry-1.docker.io",
+    "production.cloudflare.docker.com",
+}
 MLX_GATEWAY_PORT = 5276
 LOCAL_PORTS = {MLX_GATEWAY_PORT}
 
 
+pytest_plugins = ["tests.drivers.matrix"]
+
+
+def running_in_docker() -> bool:
+    """Return True when the tests are running inside a Docker container."""
+    if Path("/.dockerenv").exists():
+        return True
+
+    try:
+        return "docker" in Path("/proc/1/cgroup").read_text()
+    except OSError:
+        return False
+
+
+MLX_GATEWAY_HOST = "host.docker.internal" if running_in_docker() else "127.0.0.1"
+
+
 def ignore_local_request(request):
-    """Don't record requests to local LLM servers into cassettes."""
+    """Don't record requests to local services or Docker Hub into cassettes."""
     parsed = urlparse(request.uri)
     return (
         None
-        if parsed.hostname in LOCAL_HOSTS and parsed.port in LOCAL_PORTS
+        if (
+            parsed.hostname in DOCKERHUB_HOSTS
+            or parsed.hostname in LOCAL_HOSTS
+            and parsed.port in LOCAL_PORTS
+        )
         else request
     )
 
@@ -150,10 +177,8 @@ def vcr_config():
 @pytest.fixture(
     scope="session",
     params=dedent("""\
-        mlx-community/Qwen2.5-1.5B-Instruct-4bit
-        mlx-community/Qwen2.5-3B-Instruct-4bit
-        mlx-community/Qwen2.5-7B-Instruct-4bit
         mlx-community/Qwen3.8-27B-4bit
+        mlx-community/Qwen3.5-4B-MLX-4bit
     """)
     .strip()
     .splitlines(),
@@ -170,6 +195,8 @@ def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
     else:
         # Self-contained fallback with no network needed. It loads the model
         # in this process, so only use it when the gateway isn't running.
+        from karl.mlxproxy.chatmodel import MLXChatModel
+
         llm = MLXChatModel(
             model_id=request.param,
         )

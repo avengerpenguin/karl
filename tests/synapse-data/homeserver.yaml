@@ -1,0 +1,22 @@
+server_name: test
+pid_file: /tmp/synapse/homeserver.pid
+
+listeners:
+  - port: 8008
+    type: http
+    tls: false
+    resources:
+      - names: [client]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /tmp/synapse/homeserver.db
+
+log_config: /data/test.log.config
+media_store_path: /tmp/synapse/media_store
+enable_registration: true
+enable_registration_without_verification: true
+report_stats: false
+signing_key_path: /data/test.signing.key

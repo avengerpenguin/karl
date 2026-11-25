@@ -41,9 +41,7 @@ mlx = [
     "mlx-lm",
     "mlx",
     "fastapi",
-    "diffusers @ git+https://github.com/huggingface/diffusers@80c7ed262aeffbeb43ef13ae04baeb9b84515a69",
     "pydantic",
-    "torch",
 ]
 test = [
     "pytest",
@@ -51,9 +49,12 @@ test = [
     "pytest-asyncio",
     "pytest-recording",
     "testcontainers",
-    "textutils",
 ]
 
 [tool.pytest]
-addopts = ["--pikachu"]
+addopts = [
+    "--pikachu",
+    "--import-mode=importlib",
+]
 testpaths = ["tests"]
+asyncio_mode = "auto"

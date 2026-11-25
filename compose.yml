@@ -6,6 +6,7 @@ services:
       args:
         PLATFORM: linux/amd64
         USER: $USERID
+        HOMEDIR: $HOME
     working_dir: /app
     volumes:
       - .:/app
