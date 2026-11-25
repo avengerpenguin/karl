@@ -170,7 +170,6 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
             self._generate(messages, stop, run_manager, **kwargs).generations[0].message
         )
         if message.tool_calls:
-            tool_call = message.tool_calls[0]
             chunk = ChatGenerationChunk(
                 message=AIMessageChunk(
                     content="",
@@ -179,9 +178,10 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
                             "name": tool_call["name"],
                             "args": json.dumps(tool_call["args"]),
                             "id": tool_call["id"],
-                            "index": 0,
+                            "index": index,
                             "type": "tool_call_chunk",
                         }
+                        for index, tool_call in enumerate(message.tool_calls)
                     ],
                     chunk_position="last",
                 )
@@ -227,6 +227,25 @@ class WeatherChatModel(ToolCallingFakeChatModel):
                 message = AIMessage(content="It is 20 degrees")
         else:
             request = str(messages[-1].content)
+            if "current time" in request:
+                message = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "get_time",
+                            "args": {},
+                            "id": "call-time",
+                            "type": "tool_call",
+                        },
+                        {
+                            "name": "get_weather",
+                            "args": {"location": "Lisbon"},
+                            "id": "call-lisbon",
+                            "type": "tool_call",
+                        },
+                    ],
+                )
+                return ChatResult(generations=[ChatGeneration(message=message)])
             location = next(
                 (
                     city

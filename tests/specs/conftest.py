@@ -62,6 +62,12 @@ def get_weather(location: str) -> str:
     return result
 
 
+@tool
+def get_time() -> str:
+    """Get current time."""
+    return "12:00"
+
+
 @pytest_asyncio.fixture
 async def karl_with_tool(matrix, alice):
     async with matrix.start_karl(owner=alice, tools=[get_weather]) as bot:
@@ -75,5 +81,16 @@ async def karl_with_hitl_tool(matrix, alice):
         tools=[get_weather],
         # Use HumanInTheLoopMiddleware to add approval to this tool
         require_approval=["get_weather"],
+    ) as bot:
+        yield bot
+
+
+@pytest_asyncio.fixture
+async def karl_with_two_hitl_tools(matrix, alice):
+    async with matrix.start_karl(
+        owner=alice,
+        tools=[get_weather, get_time],
+        # Use HumanInTheLoopMiddleware to add approval to this tool
+        require_approval=["get_weather", "get_time"],
     ) as bot:
         yield bot

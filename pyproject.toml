@@ -57,7 +57,8 @@ addopts = [
     "--pikachu",
     "--import-mode=importlib",
     "--durations=10",
-    "-n 4",
+    "-n",
+    "4",
 ]
 testpaths = ["tests"]
 asyncio_mode = "auto"

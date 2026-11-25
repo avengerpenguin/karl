@@ -10,7 +10,6 @@ from . import runner
 from .bot_runner import KarlBot
 from .linkedin.agents import create as create_linkedin_agent
 from .email.agents import create as create_email_agent
-from .agents.todo import create as create_todo_agent
 from .agents.general import create as create_general_agent
 from .job import review_job_ad
 
@@ -50,30 +49,12 @@ async def linkedin(message: str, model: str = DEFAULT_MODEL):
 
 @app.command()
 @syncify
-async def todo(message: str, model: str = DEFAULT_MODEL):
-    await runner.run(
-        await create_todo_agent(model), message, memory_path="todo_memory.yaml"
-    )
-
-
-# @app.command()
-# @syncify
-# async def auto(message: str, model: str = DEFAULT_MODEL):
-#     await runner.run(
-#         await create_autodidact_agent(model), message, memory_path="auto_memory_2.yaml"
-#     )
-
-
-@app.command()
-@syncify
 async def bot(model: str = DEFAULT_MODEL):
     model = ChatOpenAI(
         model=os.getenv("KARL_MODEL", "claude-auto"),
-        temperature=0.3,
         streaming=True,
         stream_chunk_timeout=900,
         timeout=900,
-        use_responses_api=False,
     )
 
     avatar_url = "https://static.wikia.nocookie.net/simpsons/images/1/18/Karl2.png/revision/latest"
