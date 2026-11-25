@@ -9,9 +9,8 @@ from langchain_ollama import ChatOllama
 from . import _render_message_chunk, _render_completed_message
 
 CV_URL = "https://rossfenning.co.uk/cv.pdf"
-CV_TTL_URL = (
-    "https://raw.githubusercontent.com/avengerpenguin/rossfenning.co.uk/main/content/extra/cv.ttl"
-)
+CV_TTL_URL = "https://raw.githubusercontent.com/avengerpenguin/rossfenning.co.uk/main/content/extra/cv.ttl"
+
 
 def _strip_html(html: str) -> str:
     html = re.sub(r"(?is)<script.*?>.*?</script>", " ", html)
@@ -31,7 +30,9 @@ async def _fetch_text(url: str) -> str:
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; karl/0.1; +https://rossfenning.co.uk)"
     }
-    async with httpx.AsyncClient(follow_redirects=True, headers=headers, timeout=30) as client:
+    async with httpx.AsyncClient(
+        follow_redirects=True, headers=headers, timeout=30
+    ) as client:
         response = await client.get(url)
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").lower()
@@ -40,7 +41,9 @@ async def _fetch_text(url: str) -> str:
         return response.text.strip()
 
 
-async def review_job_ad(url: str, model: str = "MFDoom/deepseek-r1-tool-calling:8b") -> None:
+async def review_job_ad(
+    url: str, model: str = "MFDoom/deepseek-r1-tool-calling:8b"
+) -> None:
     job_ad = await _fetch_text(url)
     cv_ttl = await _fetch_text(CV_TTL_URL)
     llm = ChatOllama(model=model)
@@ -75,9 +78,9 @@ async def review_job_ad(url: str, model: str = "MFDoom/deepseek-r1-tool-calling:
     ]
 
     async for chunk in agent.astream(
-            {"messages": messages},
-            stream_mode=["updates", "messages"],
-            version="v2",
+        {"messages": messages},
+        stream_mode=["updates", "messages"],
+        version="v2",
     ):
         if chunk["type"] == "messages":
             token, metadata = chunk["data"]
@@ -87,4 +90,3 @@ async def review_job_ad(url: str, model: str = "MFDoom/deepseek-r1-tool-calling:
             for source, update in chunk["data"].items():
                 if source in ("model", "tools"):  # `source` captures node name
                     _render_completed_message(update["messages"][-1])
-

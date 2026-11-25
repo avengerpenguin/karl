@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest_asyncio
 from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk
-from langchain_core.outputs import ChatGenerationChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
 from nio import (
     AsyncClient,
     JoinResponse,
@@ -53,8 +55,18 @@ class MatrixWorld:
         self._users.append(user)
         return user
 
-    def start_karl(self, owner: "MatrixUser", tools=None) -> "KarlHarness":
-        bot = KarlHarness(self, owner, tools=tools)
+    def start_karl(
+        self,
+        owner: "MatrixUser",
+        tools=None,
+        require_approval=None,
+    ) -> "KarlHarness":
+        bot = KarlHarness(
+            self,
+            owner,
+            tools=tools,
+            require_approval=require_approval,
+        )
         self._bots.append(bot)
         return bot
 
@@ -108,6 +120,40 @@ class MatrixUser:
             recipient=recipient,
             room_id=room_id,
             event_id=response.event_id,
+            thread_root_event_id=response.event_id,
+            since=since,
+        )
+
+    async def reply_to_message(
+        self,
+        message: "ReceivedMessage",
+        body: str,
+    ) -> "SentMessage":
+        await self.client.sync(timeout=0)
+        since = self.client.next_batch
+        response = await self.client.room_send(
+            room_id=message.room_id,
+            message_type="m.room.message",
+            content={
+                "msgtype": "m.text",
+                "body": body,
+                "m.relates_to": {
+                    "rel_type": "m.thread",
+                    "event_id": message.thread_root_event_id,
+                    "is_falling_back": True,
+                    "m.in_reply_to": {"event_id": message.event_id},
+                },
+            },
+        )
+        if not isinstance(response, RoomSendResponse):
+            raise RuntimeError(f"Failed to send Matrix reply: {response}")
+
+        return SentMessage(
+            sender=self,
+            recipient=message.sender,
+            room_id=message.room_id,
+            event_id=response.event_id,
+            thread_root_event_id=message.thread_root_event_id,
             since=since,
         )
 
@@ -155,11 +201,66 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
         yield chunk
 
 
+class WeatherChatModel(ToolCallingFakeChatModel):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        tool_messages = [
+            message for message in messages if isinstance(message, ToolMessage)
+        ]
+        if tool_messages:
+            latest = tool_messages[-1]
+            content = str(latest.content)
+            if "with this feedback:" in content:
+                message = AIMessage(
+                    content="",
+                    tool_calls=[
+                        {
+                            "name": "get_weather",
+                            "args": {"location": "Rome, Italy"},
+                            "id": "call-revised",
+                            "type": "tool_call",
+                        }
+                    ],
+                )
+            elif getattr(latest, "status", None) == "error":
+                message = AIMessage(content="I could not check the weather.")
+            else:
+                message = AIMessage(content="It is 20 degrees")
+        else:
+            request = str(messages[-1].content)
+            location = next(
+                (
+                    city
+                    for city in ("Paris", "Berlin", "Madrid", "Rome")
+                    if city in request
+                ),
+                "Paris",
+            )
+            message = AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "get_weather",
+                        "args": {"location": location},
+                        "id": f"call-{location.lower()}",
+                        "type": "tool_call",
+                    }
+                ],
+            )
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+
 class KarlHarness(MatrixUser):
-    def __init__(self, world: MatrixWorld, owner: MatrixUser, tools=None):
+    def __init__(
+        self,
+        world: MatrixWorld,
+        owner: MatrixUser,
+        tools=None,
+        require_approval=None,
+    ):
         self.world = world
         self.owner = owner
         self.tools = tools or []
+        self.require_approval = require_approval or []
         self.name = "karl"
         self.user_id = ""
         self.client = None
@@ -198,30 +299,37 @@ class KarlHarness(MatrixUser):
         await provisioning_client.close()
         self._provisioning_client = None
 
-        async def agent_factory():
-            if not self.tools:
-                model = GenericFakeChatModel(messages=iter(["Four"]))
-            else:
-                tool = self.tools[0]
-                model = ToolCallingFakeChatModel(
-                    messages=iter(
-                        [
-                            AIMessage(
-                                content="",
-                                tool_calls=[
-                                    {
-                                        "name": tool.name,
-                                        "args": {"location": "Paris"},
-                                        "id": "call-1",
-                                        "type": "tool_call",
-                                    }
-                                ],
+        model = (
+            GenericFakeChatModel(messages=iter(["Four"]))
+            if not self.tools
+            else WeatherChatModel(messages=iter(()))
+        )
+        checkpointer = InMemorySaver()
+        middleware = (
+            [
+                HumanInTheLoopMiddleware(
+                    interrupt_on={
+                        name: {
+                            "allowed_decisions": ["approve", "reject"],
+                            "when": lambda request: (
+                                request.tool_call["id"] != "call-revised"
                             ),
-                            AIMessage(content="It is 20 degrees"),
-                        ]
-                    )
+                        }
+                        for name in self.require_approval
+                    }
                 )
-            return create_agent(model=model, tools=self.tools)
+            ]
+            if self.require_approval
+            else []
+        )
+
+        async def agent_factory():
+            return create_agent(
+                model=model,
+                tools=self.tools,
+                middleware=middleware,
+                checkpointer=checkpointer,
+            )
 
         bot_module.BOT_PASSWORD = _TEST_PASSWORD
         localpart = self.user_id.split(":", 1)[0]
@@ -244,6 +352,7 @@ class KarlHarness(MatrixUser):
         generate_reply = self._bot.generate_reply
 
         async def tracked_generate_reply(room, event):
+            self._reply_finished.clear()
             try:
                 await generate_reply(room, event)
             finally:
@@ -306,12 +415,14 @@ class SentMessage:
         recipient: MatrixUser,
         room_id: str,
         event_id: str,
+        thread_root_event_id: str,
         since: str,
     ):
         self.sender = sender
         self.recipient = recipient
         self.room_id = room_id
         self.event_id = event_id
+        self.thread_root_event_id = thread_root_event_id
         self.since = since
 
     async def wait_for_reply(self, timeout: float = 15.0) -> "ReceivedMessage":
@@ -350,9 +461,17 @@ class SentMessage:
                         isinstance(event, event_type)
                         and event.sender == self.recipient.user_id
                         and relation.get("rel_type") == "m.thread"
-                        and relation.get("event_id") == self.event_id
+                        and relation.get("event_id") == self.thread_root_event_id
                     ):
-                        messages.append(ReceivedMessage(self.recipient, event.body))
+                        messages.append(
+                            ReceivedMessage(
+                                sender=self.recipient,
+                                body=event.body,
+                                room_id=self.room_id,
+                                event_id=event.event_id,
+                                thread_root_event_id=self.thread_root_event_id,
+                            )
+                        )
                         if len(messages) == count:
                             return messages
             return messages
@@ -362,7 +481,7 @@ class SentMessage:
         except TimeoutError as error:
             raise TimeoutError(
                 f"No {event_type.__name__} events from {self.recipient.name} "
-                f"to event {self.event_id} within {timeout} seconds"
+                f"to thread {self.thread_root_event_id} within {timeout} seconds"
             ) from error
 
 
@@ -370,6 +489,9 @@ class SentMessage:
 class ReceivedMessage:
     sender: MatrixUser
     body: str
+    room_id: str
+    event_id: str
+    thread_root_event_id: str
 
 
 @pytest_asyncio.fixture
