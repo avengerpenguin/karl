@@ -55,6 +55,13 @@ async def karl_stub(matrix, alice):
         yield bot
 
 
+@pytest_asyncio.fixture
+async def karl_broken(matrix, alice):
+    # Create version that has exceptions coming out of langchain for any reason
+    async with matrix.start_karl(owner=alice, error=True) as bot:
+        yield bot
+
+
 @tool
 def get_weather(location: str) -> str:
     """Get current weather and optional forecast."""

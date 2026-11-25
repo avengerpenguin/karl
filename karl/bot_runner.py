@@ -28,6 +28,7 @@ from markdown_it import MarkdownIt
 
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
@@ -542,6 +543,7 @@ class KarlBot(PersonalBot):
 
         reaction = "✅"
         interrupt_was_reported = False
+        consumer_tasks: set[asyncio.Task] = set()
 
         try:
             stream: AsyncGraphRunStream = await agent.astream_events(
@@ -716,8 +718,7 @@ class KarlBot(PersonalBot):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                for task in done:
-                    task.result()
+                await asyncio.gather(*done)
 
                 if interrupt_was_reported:
                     for task in consumer_tasks:
@@ -727,8 +728,18 @@ class KarlBot(PersonalBot):
                     break
 
         except Exception:
+            for task in consumer_tasks:
+                task.cancel()
+
+            await asyncio.gather(*consumer_tasks, return_exceptions=True)
+            logger.exception("Failed to generate reply")
+            await self._send_text_message(
+                room.room_id,
+                "Sorry, something went wrong.",
+                thread_root_event_id=thread_root_event_id,
+                reply_to_event_id=event.event_id,
+            )
             reaction = "❌"
-            raise
         finally:
             await self.client.room_typing(room.room_id, False)
             await self._react_to_event(room.room_id, event.event_id, reaction)

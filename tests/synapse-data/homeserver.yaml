@@ -20,3 +20,11 @@ enable_registration: true
 enable_registration_without_verification: true
 report_stats: false
 signing_key_path: /data/test.signing.key
+
+# Tests log in and send rapidly; lift the default rate limits.
+rc_login:
+  address: {per_second: 1000, burst_count: 1000}
+  account: {per_second: 1000, burst_count: 1000}
+  failed_attempts: {per_second: 1000, burst_count: 1000}
+rc_registration: {per_second: 1000, burst_count: 1000}
+rc_message: {per_second: 1000, burst_count: 1000}

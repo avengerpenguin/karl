@@ -60,12 +60,14 @@ class MatrixWorld:
         owner: "MatrixUser",
         tools=None,
         require_approval=None,
+        error=False,
     ) -> "KarlHarness":
         bot = KarlHarness(
             self,
             owner,
             tools=tools,
             require_approval=require_approval,
+            error=error,
         )
         self._bots.append(bot)
         return bot
@@ -201,6 +203,14 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
         yield chunk
 
 
+class BrokenChatModel(GenericFakeChatModel):
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise RuntimeError("Simulated model failure")
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        raise RuntimeError("Simulated model failure")
+
+
 class WeatherChatModel(ToolCallingFakeChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         tool_messages = [
@@ -275,9 +285,11 @@ class KarlHarness(MatrixUser):
         owner: MatrixUser,
         tools=None,
         require_approval=None,
+        error=False,
     ):
         self.world = world
         self.owner = owner
+        self.error = error
         self.tools = tools or []
         self.require_approval = require_approval or []
         self.name = "karl"
@@ -318,11 +330,12 @@ class KarlHarness(MatrixUser):
         await provisioning_client.close()
         self._provisioning_client = None
 
-        model = (
-            GenericFakeChatModel(messages=iter(["Four"]))
-            if not self.tools
-            else WeatherChatModel(messages=iter(()))
-        )
+        if self.error:
+            model = BrokenChatModel(messages=iter(()))
+        elif not self.tools:
+            model = GenericFakeChatModel(messages=iter(["Four"]))
+        else:
+            model = WeatherChatModel(messages=iter(()))
         checkpointer = InMemorySaver()
         middleware = (
             [
@@ -443,9 +456,75 @@ class SentMessage:
         self.event_id = event_id
         self.thread_root_event_id = thread_root_event_id
         self.since = since
+        self.reactions: list[str] = []
+        self._reaction_event_ids: set[str] = set()
+        self.reply: ReceivedMessage | None = None
 
     async def wait_for_reply(self, timeout: float = 15.0) -> "ReceivedMessage":
-        return (await self._wait_for_messages(RoomMessageText, 1, timeout))[0]
+        self.reply = (await self._wait_for_messages(RoomMessageText, 1, timeout))[0]
+        # Karl reacts once its turn is over, which is just after the reply.
+        await self.wait_for_reactions(timeout)
+        return self.reply
+
+    async def wait_for_reactions(self, timeout: float = 15.0) -> list[str]:
+        async def poll() -> None:
+            since = self.since
+            while not self.reactions:
+                response = await self.sender.client.sync(since=since, timeout=250)
+                since = response.next_batch
+                room = response.rooms.join.get(self.room_id)
+                if room is not None:
+                    self._record_reply(room.timeline.events)
+                    self._record_reactions(room.timeline.events)
+
+        try:
+            await asyncio.wait_for(poll(), timeout)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"No reactions from {self.recipient.name} on {self.event_id} "
+                f"within {timeout} seconds"
+            ) from error
+        return self.reactions
+
+    def _record_reactions(self, events) -> None:
+        for event in events:
+            source = getattr(event, "source", {})
+            relation = source.get("content", {}).get("m.relates_to", {})
+            if (
+                source.get("type") == "m.reaction"
+                and source.get("sender") == self.recipient.user_id
+                and relation.get("rel_type") == "m.annotation"
+                and relation.get("event_id") == self.event_id
+                and source.get("event_id") not in self._reaction_event_ids
+            ):
+                self._reaction_event_ids.add(source.get("event_id"))
+                self.reactions.append(relation.get("key"))
+
+    def _record_reply(self, events) -> None:
+        # Karl replies before reacting, so the reply has arrived by the time
+        # the reaction does.
+        for event in events:
+            if self.reply is None and self._is_in_thread(event, RoomMessageText):
+                self.reply = self._received_message(event)
+
+    def _is_in_thread(self, event, event_type) -> bool:
+        content = getattr(event, "source", {}).get("content", {})
+        relation = content.get("m.relates_to", {})
+        return (
+            isinstance(event, event_type)
+            and event.sender == self.recipient.user_id
+            and relation.get("rel_type") == "m.thread"
+            and relation.get("event_id") == self.thread_root_event_id
+        )
+
+    def _received_message(self, event) -> "ReceivedMessage":
+        return ReceivedMessage(
+            sender=self.recipient,
+            body=event.body,
+            room_id=self.room_id,
+            event_id=event.event_id,
+            thread_root_event_id=self.thread_root_event_id,
+        )
 
     async def wait_for_notices(
         self,
@@ -473,24 +552,10 @@ class SentMessage:
                 if room is None:
                     continue
 
+                self._record_reactions(room.timeline.events)
                 for event in room.timeline.events:
-                    content = getattr(event, "source", {}).get("content", {})
-                    relation = content.get("m.relates_to", {})
-                    if (
-                        isinstance(event, event_type)
-                        and event.sender == self.recipient.user_id
-                        and relation.get("rel_type") == "m.thread"
-                        and relation.get("event_id") == self.thread_root_event_id
-                    ):
-                        messages.append(
-                            ReceivedMessage(
-                                sender=self.recipient,
-                                body=event.body,
-                                room_id=self.room_id,
-                                event_id=event.event_id,
-                                thread_root_event_id=self.thread_root_event_id,
-                            )
-                        )
+                    if self._is_in_thread(event, event_type):
+                        messages.append(self._received_message(event))
                         if len(messages) == count:
                             return messages
             return messages
