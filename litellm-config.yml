@@ -1,4 +1,9 @@
-x-mlx-gateway: &mlx-gateway
+x-remote: &remote
+  api_base: os.environ/OPENAI_API_BASE
+  api_key: os.environ/OPENAI_API_KEY
+  timeout: 60   # fail over quickly instead of hanging
+
+x-malax: &malax
   api_base: http://host.docker.internal:5276/v1
   api_key: dummy
   # The gateway holds one model at a time; the first request after a swap has to load weights.
@@ -6,28 +11,103 @@ x-mlx-gateway: &mlx-gateway
   stream_timeout: 600
 
 model_list:
-  - model_name: openai-api
-    litellm_params:
-      model: openai/claude-
-      api_base: os.environ/OPENAI_BASE_URL
-      api_key: os.environ/OPENAI_API_KEY
-
-  - model_name: local-mlx
+  # Local catch-all fallback target.
+  - model_name: qwen-local
     litellm_params:
       model: openai/mlx-community/Qwen3.8-27B-4bit
-      <<: *mlx-gateway
+      <<: *malax
 
-  - model_name: "mlx-community/*"
+  # GPT tiers. These need explicit entries because fallbacks and router tiers must point at named groups.
+  - model_name: gpt-5.6-luna
+    litellm_params: { model: litellm_proxy/gpt-5.6-luna, <<: *remote }
+  - model_name: gpt-5.6-terra
+    litellm_params: { model: litellm_proxy/gpt-5.6-terra, <<: *remote }
+  - model_name: gpt-5.6-sol
+    litellm_params: { model: litellm_proxy/gpt-5.6-sol, <<: *remote }
+
+  - model_name: claude-auto
+    litellm_params: { model: litellm_proxy/claude-auto, <<: *remote }
+
+  # Escalate up GPT models
+  - model_name: gpt-auto
     litellm_params:
-      model: "openai/mlx-community/*"
-      <<: *mlx-gateway
+      model: auto_router/complexity_router
+      complexity_router_config:
+        tiers:
+          SIMPLE: gpt-5.6-luna
+          MEDIUM: gpt-5.6-terra
+          COMPLEX: gpt-5.6-sol
+          REASONING: gpt-5.6-sol
+        classifier_type: heuristic
+        # Manual 1-tier bump (case-sensitive, newest user turn only)
+        escalation_keywords: ["LITELLM ESCALATE", "think harder"]
+        # Auto-bump 1 tier if a model repeats or errors on tool calls
+        stall_escalation_enabled: true
+        stall_escalation_window: 6
+        stall_escalation_repeat_threshold: 3
+        session_affinity: false
+      complexity_router_default_model: gpt-5.6-terra
 
+  # Model that tries Qwen and then escalates up GPT
+  - model_name: chat-auto
+    litellm_params:
+      model: auto_router/complexity_router
+      complexity_router_config:
+        tiers:
+          SIMPLE: qwen-local
+          MEDIUM: gpt-5.6-luna
+          COMPLEX: gpt-5.6-terra
+          REASONING: gpt-5.6-sol
+        classifier_type: heuristic
+        # Manual 1-tier bump (case-sensitive, newest user turn only)
+        escalation_keywords: ["LITELLM ESCALATE", "think harder"]
+        # Auto-bump 1 tier if a model repeats or errors on tool calls
+        stall_escalation_enabled: true
+        stall_escalation_window: 6
+        stall_escalation_repeat_threshold: 3
+        session_affinity: false
+      complexity_router_default_model: qwen-local
+
+  # Qwen for coding tasks until it gets too hard
+  - model_name: code-auto
+    litellm_params:
+      model: auto_router/complexity_router
+      complexity_router_config:
+        tiers:
+          SIMPLE: qwen-local
+          MEDIUM: qwen-local
+          COMPLEX: claude-auto
+          REASONING: claude-auto
+        classifier_type: heuristic
+        # Manual 1-tier bump (case-sensitive, newest user turn only)
+        escalation_keywords: ["LITELLM ESCALATE", "think harder"]
+        # Auto-bump 1 tier if a model repeats or errors on tool calls
+        stall_escalation_enabled: true
+        stall_escalation_window: 6
+        stall_escalation_repeat_threshold: 3
+        session_affinity: false
+      complexity_router_default_model: qwen-local
+
+  # Anything with a slash is treated as a Hugging Face ref and sent to the MLX gateway.
+  - model_name: "*/*"
+    litellm_params:
+      model: "openai/*/*"
+      <<: *malax
+
+  # Everything else goes to the upstream LiteLLM instance.
   - model_name: "*"
     litellm_params:
-      model: "openai/*"
-      api_base: os.environ/OPENAI_BASE_URL
-      api_key: os.environ/OPENAI_API_KEY
+      model: "litellm_proxy/*"
+      <<: *remote
 
 router_settings:
   num_retries: 1
-  default_fallbacks: ["local-mlx"]
+  fallbacks:
+    # Step up a tier on error, and end up local if the work instance is down.
+    - "gpt-5.6-luna": ["gpt-5.6-terra", "gpt-5.6-sol", "qwen-local"]
+    - "gpt-5.6-terra": ["gpt-5.6-sol", "qwen-local"]
+    - "gpt-5.6-sol": ["qwen-local"]
+    - "*": ["qwen-local"]
+
+litellm_settings:
+  check_provider_endpoint: true

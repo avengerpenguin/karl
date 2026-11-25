@@ -31,31 +31,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# MODEL = "ollama:qwen3.6:27b-coding-nvfp4"
-# MODEL = "ollama:gemma4:12b-mlx"
-# MODEL = "openai:mlx-community/Qwen3.8-27B-4bit"
-# MODEL = ChatOpenAI(
-#     base_url="http://localhost:52/v1",
-#     api_key="dummy",
-#     model="mlx-community/gemma-3-4b-pt-4bit",
-#     temperature=0.3,
-#     streaming=True,
-#     stream_chunk_timeout=900,
-#     timeout=900,
-# )
-# MODEL = "openai:gemini-3.8-flash"
-# MODEL = ChatOpenAI(
-#     model=os.getenv("KARL_MODEL", "gpt-5.5"),
-#     # temperature=0.3,
-#     streaming=True,
-#     stream_chunk_timeout=900,
-#     timeout=900,
-#     use_responses_api=False,
-# )
-# MODEL = "ollama:gemma4:12b-mlx"
-# MODEL = "openai:claude-auto"
-# MODEL = MLXChatModel(model_id="mlx-community/Qwen2.5-Coder-7B-Instruct-4bit")
-
 MAX_INTERRUPT_CHARS = 12_000
 MAX_MATRIX_NOTICE_CHARS = 20_000
 LARGE_STRING_ARG_CHARS = 200
