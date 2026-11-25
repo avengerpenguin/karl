@@ -71,6 +71,23 @@ def mlx_gateway_available(
         return False
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Abort xdist runs that would load MLXChatModel in every worker.
+
+    Without the gateway, chat_model falls back to an in-process MLXChatModel. Under
+    xdist, each worker would load its own copy of the model.
+    """
+    if hasattr(config, "workerinput"):
+        return  # an xdist worker; the controller has already checked
+
+    if config.getoption("numprocesses", default=None) and not mlx_gateway_available():
+        raise pytest.UsageError(
+            f"No MLX gateway at {MLX_GATEWAY_HOST}:{MLX_GATEWAY_PORT}. Running "
+            "under xdist would load a separate MLXChatModel in every worker. "
+            "Start the gateway, or run with -n 0."
+        )
+
+
 class PrettyJsonYamlDumper(yaml.SafeDumper):
     def ignore_aliases(self, data):
         return True
