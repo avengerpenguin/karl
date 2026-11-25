@@ -68,7 +68,7 @@ async def todo(message: str, model: str = DEFAULT_MODEL):
 @syncify
 async def bot(model: str = DEFAULT_MODEL):
     model = ChatOpenAI(
-        model=os.getenv("KARL_MODEL", "gpt-5.6-sol-bedrock"),
+        model=os.getenv("KARL_MODEL", "claude-auto"),
         temperature=0.3,
         streaming=True,
         stream_chunk_timeout=900,

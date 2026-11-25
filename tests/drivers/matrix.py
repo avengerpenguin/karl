@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,11 +8,14 @@ from pathlib import Path
 import pytest_asyncio
 from langchain.agents import create_agent
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 from nio import (
     AsyncClient,
     JoinResponse,
     RegisterResponse,
     RoomCreateResponse,
+    RoomMessageNotice,
     RoomMessageText,
     RoomPreset,
     RoomSendResponse,
@@ -49,8 +53,8 @@ class MatrixWorld:
         self._users.append(user)
         return user
 
-    def start_karl(self, owner: "MatrixUser") -> "KarlHarness":
-        bot = KarlHarness(self, owner)
+    def start_karl(self, owner: "MatrixUser", tools=None) -> "KarlHarness":
+        bot = KarlHarness(self, owner, tools=tools)
         self._bots.append(bot)
         return bot
 
@@ -111,10 +115,51 @@ class MatrixUser:
         return f"MatrixUser(name={self.name!r}, user_id={self.user_id!r})"
 
 
+class ToolCallingFakeChatModel(GenericFakeChatModel):
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        return self
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        message = (
+            self._generate(messages, stop, run_manager, **kwargs).generations[0].message
+        )
+        if message.tool_calls:
+            tool_call = message.tool_calls[0]
+            chunk = ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {
+                            "name": tool_call["name"],
+                            "args": json.dumps(tool_call["args"]),
+                            "id": tool_call["id"],
+                            "index": 0,
+                            "type": "tool_call_chunk",
+                        }
+                    ],
+                    chunk_position="last",
+                )
+            )
+            if run_manager:
+                run_manager.on_llm_new_token("", chunk=chunk)
+            yield chunk
+            return
+        chunk = ChatGenerationChunk(
+            message=AIMessageChunk(
+                content=message.content,
+                chunk_position="last",
+            )
+        )
+        if run_manager:
+            run_manager.on_llm_new_token(message.content, chunk=chunk)
+        yield chunk
+
+
 class KarlHarness(MatrixUser):
-    def __init__(self, world: MatrixWorld, owner: MatrixUser):
+    def __init__(self, world: MatrixWorld, owner: MatrixUser, tools=None):
         self.world = world
         self.owner = owner
+        self.tools = tools or []
         self.name = "karl"
         self.user_id = ""
         self.client = None
@@ -154,10 +199,29 @@ class KarlHarness(MatrixUser):
         self._provisioning_client = None
 
         async def agent_factory():
-            return create_agent(
-                model=GenericFakeChatModel(messages=iter(["Four"])),
-                tools=[],
-            )
+            if not self.tools:
+                model = GenericFakeChatModel(messages=iter(["Four"]))
+            else:
+                tool = self.tools[0]
+                model = ToolCallingFakeChatModel(
+                    messages=iter(
+                        [
+                            AIMessage(
+                                content="",
+                                tool_calls=[
+                                    {
+                                        "name": tool.name,
+                                        "args": {"location": "Paris"},
+                                        "id": "call-1",
+                                        "type": "tool_call",
+                                    }
+                                ],
+                            ),
+                            AIMessage(content="It is 20 degrees"),
+                        ]
+                    )
+                )
+            return create_agent(model=model, tools=self.tools)
 
         bot_module.BOT_PASSWORD = _TEST_PASSWORD
         localpart = self.user_id.split(":", 1)[0]
@@ -251,9 +315,25 @@ class SentMessage:
         self.since = since
 
     async def wait_for_reply(self, timeout: float = 15.0) -> "ReceivedMessage":
-        async def poll() -> ReceivedMessage:
+        return (await self._wait_for_messages(RoomMessageText, 1, timeout))[0]
+
+    async def wait_for_notices(
+        self,
+        count: int = 2,
+        timeout: float = 15.0,
+    ) -> list["ReceivedMessage"]:
+        return await self._wait_for_messages(RoomMessageNotice, count, timeout)
+
+    async def _wait_for_messages(
+        self,
+        event_type,
+        count: int,
+        timeout: float,
+    ) -> list["ReceivedMessage"]:
+        async def poll() -> list[ReceivedMessage]:
             since = self.since
-            while True:
+            messages = []
+            while len(messages) < count:
                 response = await self.sender.client.sync(
                     since=since,
                     timeout=250,
@@ -267,20 +347,22 @@ class SentMessage:
                     content = getattr(event, "source", {}).get("content", {})
                     relation = content.get("m.relates_to", {})
                     if (
-                        isinstance(event, RoomMessageText)
+                        isinstance(event, event_type)
                         and event.sender == self.recipient.user_id
-                        and content.get("msgtype") == "m.text"
                         and relation.get("rel_type") == "m.thread"
                         and relation.get("event_id") == self.event_id
                     ):
-                        return ReceivedMessage(self.recipient, event.body)
+                        messages.append(ReceivedMessage(self.recipient, event.body))
+                        if len(messages) == count:
+                            return messages
+            return messages
 
         try:
             return await asyncio.wait_for(poll(), timeout)
         except TimeoutError as error:
             raise TimeoutError(
-                f"No reply from {self.recipient.name} to event {self.event_id} "
-                f"within {timeout} seconds"
+                f"No {event_type.__name__} events from {self.recipient.name} "
+                f"to event {self.event_id} within {timeout} seconds"
             ) from error
 
 
@@ -299,9 +381,3 @@ async def matrix(synapse_url):
 @pytest_asyncio.fixture
 async def alice(matrix):
     return await matrix.create_user("alice")
-
-
-@pytest_asyncio.fixture
-async def karl(matrix, alice):
-    async with matrix.start_karl(owner=alice) as bot:
-        yield bot

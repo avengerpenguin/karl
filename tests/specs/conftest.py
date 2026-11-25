@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Any, Generator
 
 import pytest
+import pytest_asyncio
+from langchain_core.tools import tool
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from ..drivers import matrix
@@ -45,3 +47,22 @@ def synapse_url():
 def matrix_homeserver(synapse_url) -> Generator[matrix.MatrixHomeServer, Any, None]:
     """Agent implements create_world(synapse_url) in tests/drivers/matrix_driver.py."""
     yield matrix.MatrixHomeServer(synapse_url)
+
+
+@pytest_asyncio.fixture
+async def karl_stub(matrix, alice):
+    async with matrix.start_karl(owner=alice) as bot:
+        yield bot
+
+
+@tool
+def get_weather(location: str) -> str:
+    """Get current weather and optional forecast."""
+    result = f"Current weather in {location}: 20 degrees"
+    return result
+
+
+@pytest_asyncio.fixture
+async def karl_with_tool(matrix, alice):
+    async with matrix.start_karl(owner=alice, tools=[get_weather]) as bot:
+        yield bot
