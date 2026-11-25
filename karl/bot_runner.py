@@ -53,6 +53,287 @@ def _get_thread_root_event_id(event: RoomMessageText) -> str:
     return event.event_id
 
 
+def _markdown_code_fence(value: str, language: str = "") -> str:
+    backtick_runs = re.findall(r"`+", value)
+    longest_run = max((len(run) for run in backtick_runs), default=0)
+    fence = "`" * max(3, longest_run + 1)
+
+    if language:
+        return f"{fence}{language}\n{value}\n{fence}"
+
+    return f"{fence}\n{value}\n{fence}"
+
+
+def _truncate_review_text(value: str) -> str:
+    if len(value) <= MAX_INTERRUPT_CHARS:
+        return value
+
+    return value[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
+
+
+def _human_review_resume_command(
+    decision_type: str,
+    message: str | None,
+    decision_count: int,
+) -> Command:
+    if decision_count < 1:
+        decision_count = 1
+
+    if decision_type == "approve":
+        decisions = [
+            {
+                "type": "approve",
+            }
+            for _ in range(decision_count)
+        ]
+
+    else:
+        decisions = [
+            {
+                "type": "reject",
+                "message": message or "The Matrix user rejected this tool call.",
+            }
+            for _ in range(decision_count)
+        ]
+
+    return Command(
+        resume={
+            "decisions": decisions,
+        }
+    )
+
+
+def _format_tool_args_for_review(args: object) -> str:
+    if not isinstance(args, dict):
+        try:
+            pretty_args = json.dumps(
+                args,
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            )
+        except Exception:
+            pretty_args = str(args)
+
+        pretty_args = _truncate_review_text(pretty_args)
+
+        return "Arguments:\n\n" + _markdown_code_fence(pretty_args, "json")
+
+    display_args = dict(args)
+    rendered_sections: list[str] = []
+
+    for key, value in args.items():
+        if not isinstance(value, str):
+            continue
+
+        should_render_separately = (
+            key in PREVIEW_ARG_NAMES
+            or "\n" in value
+            or len(value) >= LARGE_STRING_ARG_CHARS
+        )
+
+        if not should_render_separately:
+            continue
+
+        display_args[key] = "<rendered below>"
+
+        preview = value.strip() if value.strip() else "<empty>"
+        preview = _truncate_review_text(preview)
+
+        rendered_sections.append(f"{key} preview:\n\n---\n\n{preview}\n\n---")
+
+    pretty_args = json.dumps(
+        display_args,
+        indent=2,
+        ensure_ascii=False,
+        default=str,
+    )
+    pretty_args = _truncate_review_text(pretty_args)
+
+    sections = [
+        "Arguments:",
+        _markdown_code_fence(pretty_args, "json"),
+    ]
+    sections.extend(rendered_sections)
+
+    return _truncate_review_text("\n\n".join(sections))
+
+
+def _format_interrupt(interrupt: object) -> str:
+    value = getattr(interrupt, "value", interrupt)
+
+    if isinstance(value, dict):
+        action_requests = value.get("action_requests") or []
+
+        if action_requests:
+            sections = ["Approval needed before continuing."]
+
+            for index, action in enumerate(action_requests, start=1):
+                name = action.get("name", "unknown_tool")
+                args = action.get("args", {})
+
+                if len(action_requests) == 1:
+                    sections.append(
+                        f"Tool: `{name}`\n\n{_format_tool_args_for_review(args)}"
+                    )
+                else:
+                    sections.append(
+                        f"Tool {index}: `{name}`\n\n"
+                        f"{_format_tool_args_for_review(args)}"
+                    )
+
+            if len(action_requests) == 1:
+                sections.append(
+                    "Reply in this thread with one of:\n\n"
+                    "- `approve`\n"
+                    "- `deny`\n"
+                    "- `deny: <reason>`"
+                )
+            else:
+                sections.append(
+                    f"This approval contains **{len(action_requests)} tool calls**.\n\n"
+                    "Reply in this thread with one of:\n\n"
+                    "- `approve` — approve all listed tool calls\n"
+                    "- `deny` — deny all listed tool calls\n"
+                    "- `deny: <reason>` — deny all listed tool calls with feedback"
+                )
+
+            return "\n\n".join(sections)
+
+    try:
+        pretty_value = json.dumps(
+            value,
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        )
+    except Exception:
+        pretty_value = str(value)
+
+    if len(pretty_value) > MAX_INTERRUPT_CHARS:
+        pretty_value = pretty_value[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
+
+    return (
+        "Approval needed before continuing.\n\n"
+        f"{_markdown_code_fence(pretty_value, 'json')}\n\n"
+        "Reply in this thread with one of:\n\n"
+        "- `approve`\n"
+        "- `deny`\n"
+        "- `deny: <reason>`"
+    )
+
+
+def _thread_relates_to(
+    thread_root_event_id: str,
+    reply_to_event_id: str | None = None,
+) -> dict:
+    return {
+        "rel_type": "m.thread",
+        "event_id": thread_root_event_id,
+        "is_falling_back": True,
+        "m.in_reply_to": {
+            "event_id": reply_to_event_id or thread_root_event_id,
+        },
+    }
+
+
+def _pending_human_decision_count(state: object) -> int:
+    count = 0
+
+    tasks = getattr(state, "tasks", None) or []
+    for task in tasks:
+        interrupts = getattr(task, "interrupts", None) or ()
+
+        for interrupt in interrupts:
+            value = getattr(interrupt, "value", interrupt)
+
+            if isinstance(value, dict):
+                action_requests = value.get("action_requests") or []
+                count += len(action_requests)
+
+    values = getattr(state, "values", None)
+    if isinstance(values, dict):
+        interrupts = values.get("__interrupt__") or []
+
+        if not isinstance(interrupts, list | tuple):
+            interrupts = [interrupts]
+
+        for interrupt in interrupts:
+            value = getattr(interrupt, "value", interrupt)
+
+            if isinstance(value, dict):
+                action_requests = value.get("action_requests") or []
+                count += len(action_requests)
+
+    return count
+
+
+def _human_review_decision(text: str) -> tuple[str, str | None] | None:
+    stripped = text.strip()
+    lowered = stripped.lower()
+
+    if lowered == "approve":
+        return "approve", None
+
+    if lowered in {"deny", "reject"}:
+        return (
+            "reject",
+            (
+                "The Matrix user rejected this tool call. "
+                "Do not retry the same tool call unchanged."
+            ),
+        )
+
+    for prefix in ("deny because ", "reject because ", "deny: ", "reject: "):
+        if lowered.startswith(prefix):
+            reason = stripped[len(prefix) :].strip()
+            return (
+                "reject",
+                (
+                    "The Matrix user rejected this tool call with this feedback:\n\n"
+                    f"{reason}\n\n"
+                    "Revise your plan accordingly. Do not retry the same tool call unchanged."
+                ),
+            )
+
+    return None
+
+
+def _agent_thread_id(room_id: str, thread_root_event_id: str) -> str:
+    raw = f"{room_id}:{thread_root_event_id}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _split_matrix_notice(text: str) -> list[str]:
+    if len(text) <= MAX_MATRIX_NOTICE_CHARS:
+        return [text]
+
+    chunks: list[str] = []
+    remaining = text
+
+    while remaining:
+        chunk = remaining[:MAX_MATRIX_NOTICE_CHARS]
+
+        if len(remaining) > MAX_MATRIX_NOTICE_CHARS:
+            split_at = max(chunk.rfind("\n\n"), chunk.rfind("\n"))
+
+            if split_at > MAX_MATRIX_NOTICE_CHARS // 2:
+                chunk = remaining[:split_at].rstrip()
+                remaining = remaining[split_at:].lstrip()
+            else:
+                remaining = remaining[MAX_MATRIX_NOTICE_CHARS:].lstrip()
+        else:
+            remaining = ""
+
+        chunks.append(chunk)
+
+    total = len(chunks)
+    return [
+        f"(part {index}/{total})\n\n{chunk}"
+        for index, chunk in enumerate(chunks, start=1)
+    ]
+
+
 class KarlBot(PersonalBot):
     def __init__(
         self,
@@ -67,251 +348,6 @@ class KarlBot(PersonalBot):
     ):
         super().__init__(*args, **kwargs)
         self.agent_factory = agent_factory
-
-    def _agent_thread_id(self, room_id: str, thread_root_event_id: str) -> str:
-        raw = f"{room_id}:{thread_root_event_id}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    def _human_review_decision(self, text: str) -> tuple[str, str | None] | None:
-        stripped = text.strip()
-        lowered = stripped.lower()
-
-        if lowered == "approve":
-            return "approve", None
-
-        if lowered in {"deny", "reject"}:
-            return (
-                "reject",
-                (
-                    "The Matrix user rejected this tool call. "
-                    "Do not retry the same tool call unchanged."
-                ),
-            )
-
-        for prefix in ("deny because ", "reject because ", "deny: ", "reject: "):
-            if lowered.startswith(prefix):
-                reason = stripped[len(prefix) :].strip()
-                return (
-                    "reject",
-                    (
-                        "The Matrix user rejected this tool call with this feedback:\n\n"
-                        f"{reason}\n\n"
-                        "Revise your plan accordingly. Do not retry the same tool call unchanged."
-                    ),
-                )
-
-        return None
-
-    def _pending_human_decision_count(self, state: object) -> int:
-        count = 0
-
-        tasks = getattr(state, "tasks", None) or []
-        for task in tasks:
-            interrupts = getattr(task, "interrupts", None) or ()
-
-            for interrupt in interrupts:
-                value = getattr(interrupt, "value", interrupt)
-
-                if isinstance(value, dict):
-                    action_requests = value.get("action_requests") or []
-                    count += len(action_requests)
-
-        values = getattr(state, "values", None)
-        if isinstance(values, dict):
-            interrupts = values.get("__interrupt__") or []
-
-            if not isinstance(interrupts, list | tuple):
-                interrupts = [interrupts]
-
-            for interrupt in interrupts:
-                value = getattr(interrupt, "value", interrupt)
-
-                if isinstance(value, dict):
-                    action_requests = value.get("action_requests") or []
-                    count += len(action_requests)
-
-        return count
-
-    def _human_review_resume_command(
-        self,
-        decision_type: str,
-        message: str | None,
-        decision_count: int,
-    ) -> Command:
-        if decision_count < 1:
-            decision_count = 1
-
-        if decision_type == "approve":
-            decisions = [
-                {
-                    "type": "approve",
-                }
-                for _ in range(decision_count)
-            ]
-
-        else:
-            decisions = [
-                {
-                    "type": "reject",
-                    "message": message or "The Matrix user rejected this tool call.",
-                }
-                for _ in range(decision_count)
-            ]
-
-        return Command(
-            resume={
-                "decisions": decisions,
-            }
-        )
-
-    def _markdown_code_fence(self, value: str, language: str = "") -> str:
-        backtick_runs = re.findall(r"`+", value)
-        longest_run = max((len(run) for run in backtick_runs), default=0)
-        fence = "`" * max(3, longest_run + 1)
-
-        if language:
-            return f"{fence}{language}\n{value}\n{fence}"
-
-        return f"{fence}\n{value}\n{fence}"
-
-    def _truncate_review_text(self, value: str) -> str:
-        if len(value) <= MAX_INTERRUPT_CHARS:
-            return value
-
-        return value[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
-
-    def _format_tool_args_for_review(self, args: object) -> str:
-        if not isinstance(args, dict):
-            try:
-                pretty_args = json.dumps(
-                    args,
-                    indent=2,
-                    ensure_ascii=False,
-                    default=str,
-                )
-            except Exception:
-                pretty_args = str(args)
-
-            pretty_args = self._truncate_review_text(pretty_args)
-
-            return "Arguments:\n\n" + self._markdown_code_fence(pretty_args, "json")
-
-        display_args = dict(args)
-        rendered_sections: list[str] = []
-
-        for key, value in args.items():
-            if not isinstance(value, str):
-                continue
-
-            should_render_separately = (
-                key in PREVIEW_ARG_NAMES
-                or "\n" in value
-                or len(value) >= LARGE_STRING_ARG_CHARS
-            )
-
-            if not should_render_separately:
-                continue
-
-            display_args[key] = "<rendered below>"
-
-            preview = value.strip() if value.strip() else "<empty>"
-            preview = self._truncate_review_text(preview)
-
-            rendered_sections.append(f"{key} preview:\n\n---\n\n{preview}\n\n---")
-
-        pretty_args = json.dumps(
-            display_args,
-            indent=2,
-            ensure_ascii=False,
-            default=str,
-        )
-        pretty_args = self._truncate_review_text(pretty_args)
-
-        sections = [
-            "Arguments:",
-            self._markdown_code_fence(pretty_args, "json"),
-        ]
-        sections.extend(rendered_sections)
-
-        return self._truncate_review_text("\n\n".join(sections))
-
-    def _format_interrupt(self, interrupt: object) -> str:
-        value = getattr(interrupt, "value", interrupt)
-
-        if isinstance(value, dict):
-            action_requests = value.get("action_requests") or []
-
-            if action_requests:
-                sections = ["Approval needed before continuing."]
-
-                for index, action in enumerate(action_requests, start=1):
-                    name = action.get("name", "unknown_tool")
-                    args = action.get("args", {})
-
-                    if len(action_requests) == 1:
-                        sections.append(
-                            f"Tool: `{name}`\n\n"
-                            f"{self._format_tool_args_for_review(args)}"
-                        )
-                    else:
-                        sections.append(
-                            f"Tool {index}: `{name}`\n\n"
-                            f"{self._format_tool_args_for_review(args)}"
-                        )
-
-                if len(action_requests) == 1:
-                    sections.append(
-                        "Reply in this thread with one of:\n\n"
-                        "- `approve`\n"
-                        "- `deny`\n"
-                        "- `deny: <reason>`"
-                    )
-                else:
-                    sections.append(
-                        f"This approval contains **{len(action_requests)} tool calls**.\n\n"
-                        "Reply in this thread with one of:\n\n"
-                        "- `approve` — approve all listed tool calls\n"
-                        "- `deny` — deny all listed tool calls\n"
-                        "- `deny: <reason>` — deny all listed tool calls with feedback"
-                    )
-
-                return "\n\n".join(sections)
-
-        try:
-            pretty_value = json.dumps(
-                value,
-                indent=2,
-                ensure_ascii=False,
-                default=str,
-            )
-        except Exception:
-            pretty_value = str(value)
-
-        if len(pretty_value) > MAX_INTERRUPT_CHARS:
-            pretty_value = pretty_value[:MAX_INTERRUPT_CHARS] + "\n... <truncated>"
-
-        return (
-            "Approval needed before continuing.\n\n"
-            f"{self._markdown_code_fence(pretty_value, 'json')}\n\n"
-            "Reply in this thread with one of:\n\n"
-            "- `approve`\n"
-            "- `deny`\n"
-            "- `deny: <reason>`"
-        )
-
-    def _thread_relates_to(
-        self,
-        thread_root_event_id: str,
-        reply_to_event_id: str | None = None,
-    ) -> dict:
-        return {
-            "rel_type": "m.thread",
-            "event_id": thread_root_event_id,
-            "is_falling_back": True,
-            "m.in_reply_to": {
-                "event_id": reply_to_event_id or thread_root_event_id,
-            },
-        }
 
     async def _react_to_event(self, room_id: str, event_id: str, key: str) -> None:
         await self.client.room_send(
@@ -342,7 +378,7 @@ class KarlBot(PersonalBot):
         }
 
         if thread_root_event_id is not None:
-            content["m.relates_to"] = self._thread_relates_to(
+            content["m.relates_to"] = _thread_relates_to(
                 thread_root_event_id,
                 reply_to_event_id,
             )
@@ -354,35 +390,6 @@ class KarlBot(PersonalBot):
         )
         return getattr(response, "event_id", None)
 
-    def _split_matrix_notice(self, text: str) -> list[str]:
-        if len(text) <= MAX_MATRIX_NOTICE_CHARS:
-            return [text]
-
-        chunks: list[str] = []
-        remaining = text
-
-        while remaining:
-            chunk = remaining[:MAX_MATRIX_NOTICE_CHARS]
-
-            if len(remaining) > MAX_MATRIX_NOTICE_CHARS:
-                split_at = max(chunk.rfind("\n\n"), chunk.rfind("\n"))
-
-                if split_at > MAX_MATRIX_NOTICE_CHARS // 2:
-                    chunk = remaining[:split_at].rstrip()
-                    remaining = remaining[split_at:].lstrip()
-                else:
-                    remaining = remaining[MAX_MATRIX_NOTICE_CHARS:].lstrip()
-            else:
-                remaining = ""
-
-            chunks.append(chunk)
-
-        total = len(chunks)
-        return [
-            f"(part {index}/{total})\n\n{chunk}"
-            for index, chunk in enumerate(chunks, start=1)
-        ]
-
     async def _send_notice(
         self,
         room_id: str,
@@ -392,14 +399,14 @@ class KarlBot(PersonalBot):
     ) -> str | None:
         first_event_id: str | None = None
 
-        for chunk in self._split_matrix_notice(text):
+        for chunk in _split_matrix_notice(text):
             content = {
                 "msgtype": "m.notice",
                 "body": chunk,
             }
 
             if thread_root_event_id is not None:
-                content["m.relates_to"] = self._thread_relates_to(
+                content["m.relates_to"] = _thread_relates_to(
                     thread_root_event_id,
                     reply_to_event_id,
                 )
@@ -470,7 +477,7 @@ class KarlBot(PersonalBot):
         agent = await self.agent_factory()
 
         thread_root_event_id = _get_thread_root_event_id(event)
-        agent_thread_id = self._agent_thread_id(room.room_id, thread_root_event_id)
+        agent_thread_id = _agent_thread_id(room.room_id, thread_root_event_id)
         agent_config = {
             "configurable": {
                 "thread_id": agent_thread_id,
@@ -488,15 +495,15 @@ class KarlBot(PersonalBot):
             },
         }
 
-        review_decision = self._human_review_decision(event.body)
+        review_decision = _human_review_decision(event.body)
         resume_command: Command | None = None
 
         if review_decision is not None:
             decision_type, message = review_decision
             state = await agent.aget_state(agent_config)
-            decision_count = self._pending_human_decision_count(state)
+            decision_count = _pending_human_decision_count(state)
 
-            resume_command = self._human_review_resume_command(
+            resume_command = _human_review_resume_command(
                 decision_type=decision_type,
                 message=message,
                 decision_count=decision_count,
@@ -675,7 +682,7 @@ class KarlBot(PersonalBot):
                     interrupt_was_reported = True
                     await self._send_notice(
                         room.room_id,
-                        self._format_interrupt(interrupt),
+                        _format_interrupt(interrupt),
                         thread_root_event_id=thread_root_event_id,
                         reply_to_event_id=event.event_id,
                     )
