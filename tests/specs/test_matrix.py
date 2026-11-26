@@ -132,3 +132,28 @@ async def test_karl_with_multiple_tool_approvals(alice, karl_with_two_hitl_tools
     approval_message = await alice.reply_to_message(approval_notice, "approve")
     reply = await approval_message.wait_for_reply()
     assert "20" in reply.body
+
+
+async def test_karl_reports_token_usage_in_final_notice(alice, karl_stub):
+    sent_message = await alice.send_direct_message(
+        karl_stub,
+        "What is two plus two?",
+    )
+
+    reply = await sent_message.wait_for_reply()
+    notices = await sent_message.wait_for_notices()
+
+    assert reply.sender == karl_stub
+
+    usage_notice = notices[-1]
+    assert usage_notice.sender == karl_stub
+    assert usage_notice.body.startswith("tokens — ")
+
+    fields = dict(
+        field.split(": ", maxsplit=1)
+        for field in usage_notice.body.removeprefix("tokens — ").split(", ")
+    )
+
+    assert fields.keys() == {"in", "out", "total"}
+    assert all(value.isdigit() for value in fields.values())
+    assert int(fields["total"]) == int(fields["in"]) + int(fields["out"])

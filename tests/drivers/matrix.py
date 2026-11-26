@@ -203,6 +203,19 @@ class ToolCallingFakeChatModel(GenericFakeChatModel):
         yield chunk
 
 
+class UsageFakeChatModel(GenericFakeChatModel):
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        chat_result = self._generate(messages, stop, run_manager, **kwargs)
+        message = chat_result.generations[0].message
+        yield ChatGenerationChunk(
+            message=AIMessageChunk(
+                content=message.content,
+                usage_metadata=message.usage_metadata,
+                chunk_position="last",
+            )
+        )
+
+
 class BrokenChatModel(GenericFakeChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         raise RuntimeError("Simulated model failure")
@@ -333,7 +346,20 @@ class KarlHarness(MatrixUser):
         if self.error:
             model = BrokenChatModel(messages=iter(()))
         elif not self.tools:
-            model = GenericFakeChatModel(messages=iter(["Four"]))
+            model = UsageFakeChatModel(
+                messages=iter(
+                    [
+                        AIMessage(
+                            content="Four",
+                            usage_metadata={
+                                "input_tokens": 3,
+                                "output_tokens": 1,
+                                "total_tokens": 4,
+                            },
+                        )
+                    ]
+                )
+            )
         else:
             model = WeatherChatModel(messages=iter(()))
         checkpointer = InMemorySaver()
@@ -459,6 +485,7 @@ class SentMessage:
         self.reactions: list[str] = []
         self._reaction_event_ids: set[str] = set()
         self.reply: ReceivedMessage | None = None
+        self.notices: list[ReceivedMessage] = []
 
     async def wait_for_reply(self, timeout: float = 15.0) -> "ReceivedMessage":
         self.reply = (await self._wait_for_messages(RoomMessageText, 1, timeout))[0]
@@ -475,6 +502,7 @@ class SentMessage:
                 room = response.rooms.join.get(self.room_id)
                 if room is not None:
                     self._record_reply(room.timeline.events)
+                    self._record_notices(room.timeline.events)
                     self._record_reactions(room.timeline.events)
 
         try:
@@ -485,6 +513,13 @@ class SentMessage:
                 f"within {timeout} seconds"
             ) from error
         return self.reactions
+
+    def _record_notices(self, events) -> None:
+        for event in events:
+            if self._is_in_thread(event, RoomMessageNotice):
+                message = self._received_message(event)
+                if message not in self.notices:
+                    self.notices.append(message)
 
     def _record_reactions(self, events) -> None:
         for event in events:
@@ -506,6 +541,7 @@ class SentMessage:
         for event in events:
             if self.reply is None and self._is_in_thread(event, RoomMessageText):
                 self.reply = self._received_message(event)
+        self._record_notices(events)
 
     def _is_in_thread(self, event, event_type) -> bool:
         content = getattr(event, "source", {}).get("content", {})
@@ -531,7 +567,42 @@ class SentMessage:
         count: int = 2,
         timeout: float = 15.0,
     ) -> list["ReceivedMessage"]:
+        if self.reply is not None and self.notices:
+            return self.notices
         return await self._wait_for_messages(RoomMessageNotice, count, timeout)
+
+    async def wait_for_all_notices(
+        self,
+        timeout: float = 15.0,
+        quiet_period: float = 0.2,
+    ) -> list["ReceivedMessage"]:
+        async def poll() -> list[ReceivedMessage]:
+            since = self.since
+            last_message_at = asyncio.get_running_loop().time()
+            while True:
+                response = await self.sender.client.sync(since=since, timeout=250)
+                since = response.next_batch
+                room = response.rooms.join.get(self.room_id)
+                if room is not None:
+                    self._record_reactions(room.timeline.events)
+                    for event in room.timeline.events:
+                        if self._is_in_thread(event, RoomMessageNotice):
+                            self.notices.append(self._received_message(event))
+                            last_message_at = asyncio.get_running_loop().time()
+                if (
+                    self.notices
+                    and asyncio.get_running_loop().time() - last_message_at
+                    >= quiet_period
+                ):
+                    return self.notices
+
+        try:
+            return await asyncio.wait_for(poll(), timeout)
+        except TimeoutError as error:
+            raise TimeoutError(
+                f"No stable set of notices from {self.recipient.name} "
+                f"to thread {self.thread_root_event_id} within {timeout} seconds"
+            ) from error
 
     async def _wait_for_messages(
         self,
