@@ -61,6 +61,7 @@ class MatrixWorld:
         tools=None,
         require_approval=None,
         error=False,
+        model_name: str | None = None,
     ) -> "KarlHarness":
         bot = KarlHarness(
             self,
@@ -68,6 +69,7 @@ class MatrixWorld:
             tools=tools,
             require_approval=require_approval,
             error=error,
+            model_name=model_name,
         )
         self._bots.append(bot)
         return bot
@@ -211,6 +213,7 @@ class UsageFakeChatModel(GenericFakeChatModel):
             message=AIMessageChunk(
                 content=message.content,
                 usage_metadata=message.usage_metadata,
+                response_metadata=message.response_metadata,
                 chunk_position="last",
             )
         )
@@ -299,10 +302,12 @@ class KarlHarness(MatrixUser):
         tools=None,
         require_approval=None,
         error=False,
+        model_name: str | None = None,
     ):
         self.world = world
         self.owner = owner
         self.error = error
+        self.model_name = model_name
         self.tools = tools or []
         self.require_approval = require_approval or []
         self.name = "karl"
@@ -356,6 +361,11 @@ class KarlHarness(MatrixUser):
                                 "output_tokens": 1,
                                 "total_tokens": 4,
                             },
+                            response_metadata=(
+                                {"model_name": self.model_name}
+                                if self.model_name
+                                else {}
+                            ),
                         )
                     ]
                 )

@@ -62,6 +62,12 @@ async def karl_broken(matrix, alice):
         yield bot
 
 
+@pytest_asyncio.fixture
+async def karl_with_named_model(matrix, alice):
+    async with matrix.start_karl(owner=alice, model_name="stub-model-1") as bot:
+        yield bot
+
+
 @tool
 def get_weather(location: str) -> str:
     """Get current weather and optional forecast."""

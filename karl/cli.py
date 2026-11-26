@@ -53,6 +53,7 @@ async def bot(model: str = DEFAULT_MODEL):
     model = ChatOpenAI(
         model=os.getenv("KARL_MODEL", "chat-auto"),
         streaming=True,
+        stream_usage=True,
         stream_chunk_timeout=900,
         timeout=900,
     )

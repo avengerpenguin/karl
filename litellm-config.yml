@@ -38,7 +38,12 @@ model_list:
           MEDIUM: gpt-5.6-terra
           COMPLEX: gpt-5.6-sol
           REASONING: gpt-5.6-sol
-        classifier_type: heuristic
+        classifier_type: llm
+        classifier_llm_config:
+          model: claude-sonnet-5
+        classifier_context_include_assistant_turns: true
+        classifier_context_window_size: 3
+        classifier_context_per_turn_chars: 200
         # Manual 1-tier bump (case-sensitive, newest user turn only)
         escalation_keywords: ["LITELLM ESCALATE", "think harder"]
         # Auto-bump 1 tier if a model repeats or errors on tool calls
@@ -58,7 +63,16 @@ model_list:
           MEDIUM: gpt-5.6-luna
           COMPLEX: gpt-5.6-terra
           REASONING: gpt-5.6-sol
-        classifier_type: heuristic
+        classifier_type: llm
+        classifier_llm_config:
+          model: claude-sonnet-5
+        classifier_context_include_assistant_turns: true
+        classifier_context_window_size: 3
+        classifier_context_per_turn_chars: 200
+        token_thresholds:
+          simple: 2048
+          medium: 8192
+          complex: 32768
         # Manual 1-tier bump (case-sensitive, newest user turn only)
         escalation_keywords: ["LITELLM ESCALATE", "think harder"]
         # Auto-bump 1 tier if a model repeats or errors on tool calls
@@ -75,10 +89,19 @@ model_list:
       complexity_router_config:
         tiers:
           SIMPLE: qwen-local
-          MEDIUM: qwen-local
+          MEDIUM: claude-auto
           COMPLEX: claude-auto
           REASONING: claude-auto
-        classifier_type: heuristic
+        classifier_type: llm
+        classifier_llm_config:
+          model: claude-sonnet-5
+        classifier_context_include_assistant_turns: true
+        classifier_context_window_size: 3
+        classifier_context_per_turn_chars: 200
+        token_thresholds:
+          simple: 4096
+          medium: 8192
+          complex: 32768
         # Manual 1-tier bump (case-sensitive, newest user turn only)
         escalation_keywords: ["LITELLM ESCALATE", "think harder"]
         # Auto-bump 1 tier if a model repeats or errors on tool calls
@@ -103,11 +126,11 @@ model_list:
 router_settings:
   num_retries: 1
   fallbacks:
-    # Step up a tier on error, and end up local if the work instance is down.
-    - "gpt-5.6-luna": ["gpt-5.6-terra", "gpt-5.6-sol", "qwen-local"]
-    - "gpt-5.6-terra": ["gpt-5.6-sol", "qwen-local"]
-    - "gpt-5.6-sol": ["qwen-local"]
-    - "*": ["qwen-local"]
+    # Step up a tier on error.
+    - "gpt-5.6-luna": ["gpt-5.6-terra", "gpt-5.6-sol"]
+    - "gpt-5.6-terra": ["gpt-5.6-sol"]
+    - "gpt-5.6-sol": ["gpt-5.6-terra"]
+    - "*": ["gpt-5.6-terra"]
 
 litellm_settings:
   check_provider_endpoint: true

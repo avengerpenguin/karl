@@ -633,9 +633,13 @@ class KarlBot(PersonalBot):
 
                     usage = full_message.usage_metadata
                     if usage:
+                        model_name = (full_message.response_metadata or {}).get(
+                            "model_name"
+                        )
+                        model_prefix = f"model: {model_name} — " if model_name else ""
                         await self._send_notice(
                             room.room_id,
-                            f"tokens — in: {usage.get('input_tokens')}, "
+                            f"{model_prefix}tokens — in: {usage.get('input_tokens')}, "
                             f"out: {usage.get('output_tokens')}, "
                             f"total: {usage.get('total_tokens')}",
                             thread_root_event_id=thread_root_event_id,
