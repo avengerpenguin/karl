@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.tools import StructuredTool, BaseTool
 from langchain_openai import ChatOpenAI
 from vcr import VCR
 
@@ -195,7 +196,6 @@ def vcr_config():
     scope="session",
     params=dedent("""\
         mlx-community/Qwen3.8-27B-4bit
-        mlx-community/Qwen3.5-4B-MLX-4bit
     """)
     .strip()
     .splitlines(),
@@ -218,3 +218,21 @@ def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
             model_id=request.param,
         )
     return llm
+
+
+@pytest.fixture
+def get_weather() -> BaseTool:
+    def f(location: str):
+        """Get current weather and optional forecast."""
+        return f"Current weather in {location}: 20 degrees"
+
+    return StructuredTool.from_function(f, name="get_weather")
+
+
+@pytest.fixture
+def get_time() -> BaseTool:
+    def f():
+        """Get current time."""
+        return "12:00"
+
+    return StructuredTool.from_function(f, name="get_time")

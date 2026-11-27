@@ -4,7 +4,6 @@ from typing import Any, Generator
 
 import pytest
 import pytest_asyncio
-from langchain_core.tools import tool
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 from ..drivers import matrix
@@ -68,27 +67,14 @@ async def karl_with_named_model(matrix, alice):
         yield bot
 
 
-@tool
-def get_weather(location: str) -> str:
-    """Get current weather and optional forecast."""
-    result = f"Current weather in {location}: 20 degrees"
-    return result
-
-
-@tool
-def get_time() -> str:
-    """Get current time."""
-    return "12:00"
-
-
 @pytest_asyncio.fixture
-async def karl_with_tool(matrix, alice):
+async def karl_with_tool(matrix, alice, get_weather):
     async with matrix.start_karl(owner=alice, tools=[get_weather]) as bot:
         yield bot
 
 
 @pytest_asyncio.fixture
-async def karl_with_hitl_tool(matrix, alice):
+async def karl_with_hitl_tool(matrix, alice, get_weather):
     async with matrix.start_karl(
         owner=alice,
         tools=[get_weather],
@@ -99,7 +85,7 @@ async def karl_with_hitl_tool(matrix, alice):
 
 
 @pytest_asyncio.fixture
-async def karl_with_two_hitl_tools(matrix, alice):
+async def karl_with_two_hitl_tools(matrix, alice, get_weather, get_time):
     async with matrix.start_karl(
         owner=alice,
         tools=[get_weather, get_time],

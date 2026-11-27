@@ -1,10 +1,10 @@
 import os
-import sys
+import re
 import traceback
 from pathlib import Path
 from textwrap import dedent
 
-import tiktoken
+import sys
 
 from deepagents import create_deep_agent
 from deepagents.backends import LocalShellBackend, CompositeBackend, StateBackend
@@ -62,6 +62,7 @@ from ..sql.tools import get_database_tools
 from ..tools import http, search, cv
 from ..tools.amazon import search_amazon_products_with_affiliate_links
 from ..tools.custom_mcp import get_custom_mcp_tools
+from ..tools.tool_search_middleware import ToolSearchMiddleware
 
 
 def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
@@ -74,7 +75,13 @@ def on_error(exc: Exception, request: ToolCallRequest) -> str | None:
     return error_message
 
 
-enc = tiktoken.get_encoding("cl100k_base")
+def estimate_token_count(text: str) -> int:
+    """
+    Estimate token count using regex to count non-whitespace sequences.
+    This is closer to tiktoken but still much faster.
+    """
+    # Count non-whitespace sequences (roughly correlates with tokens)
+    return len(re.findall(r"\S+", text))
 
 
 @wrap_tool_call
@@ -86,7 +93,7 @@ async def track_tool_payloads(request: ToolCallRequest, handler):
 
     # 2. Measure the token payload size
     result_str = str(result)
-    token_count = len(enc.encode(result_str))
+    token_count = estimate_token_count(result_str)
 
     # 3. Alert if a tool returns a massive payload (> 10,000 tokens)
     if token_count > 10000:
@@ -122,9 +129,8 @@ async def get_checkpointer() -> AsyncSqliteSaver:
 async def create(model: BaseChatModel | str):
     checkpointer = await get_checkpointer()
 
-    return create_deep_agent(
-        model=model,
-        tools=[
+    tools = (
+        [
             search_amazon_products_with_affiliate_links,
             list_folders,
             search_emails,
@@ -184,7 +190,12 @@ async def create(model: BaseChatModel | str):
                 confluence.update_page,
                 confluence.get_page_comments,
             ]
-        ],
+        ]
+    )
+
+    return create_deep_agent(
+        model=model,
+        tools=tools,
         system_prompt=dedent("""\
             You are a personal assistant helping a user with any task they need help with.
             All context and knowledge are persisted via filesystem tools which should be consulted for information on any task.
@@ -197,6 +208,7 @@ async def create(model: BaseChatModel | str):
             If you encounter a task for which there is no clear tool to use, you may request new tools be built to expand your capability.
         """),
         middleware=[
+            ToolSearchMiddleware(tools),
             track_tool_payloads,
             ToolErrorMiddleware(on_error),
             HumanInTheLoopMiddleware(
