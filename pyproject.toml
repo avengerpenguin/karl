@@ -10,6 +10,7 @@ dependencies = [
     "langchain >= 1.4.0",
     "fastmcp",
     "deepagents",
+    "deepagents-acp",
     "typer",
     "rich",
     "pypdf",

@@ -1,12 +1,12 @@
 from pathlib import Path
 
-from typing import Any, Generator
-
 import pytest
 import pytest_asyncio
+from langchain.agents import create_agent
+from langgraph.checkpoint.memory import InMemorySaver
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
-from ..drivers import matrix
+from ..drivers.matrix import WeatherChatModel
 
 
 @pytest.fixture(scope="session")
@@ -40,12 +40,6 @@ def synapse_url():
         host = container.get_container_host_ip()
         port = container.get_exposed_port(8008)
         yield f"http://{host}:{port}"
-
-
-@pytest.fixture
-def matrix_homeserver(synapse_url) -> Generator[matrix.MatrixHomeServer, Any, None]:
-    """Agent implements create_world(synapse_url) in tests/drivers/matrix_driver.py."""
-    yield matrix.MatrixHomeServer(synapse_url)
 
 
 @pytest_asyncio.fixture
@@ -92,4 +86,26 @@ async def karl_with_two_hitl_tools(matrix, alice, get_weather, get_time):
         # Use HumanInTheLoopMiddleware to add approval to this tool
         require_approval=["get_weather", "get_time"],
     ) as bot:
+        yield bot
+
+
+@pytest_asyncio.fixture
+async def karl_needing_authorization(matrix, alice, oauth_authority):
+    async def agent_factory(session):
+        async def get_weather(location: str) -> str:
+            """Get today's calendar after the user signs in."""
+            await oauth_authority.require_authorization(session.elicitor)
+            return "Today's calendar is clear."
+
+        return create_agent(
+            model=WeatherChatModel(messages=iter(())),
+            tools=[get_weather],
+            checkpointer=InMemorySaver(),
+        )
+
+    async with matrix.start_karl(
+        owner=alice,
+        agent_factory=agent_factory,
+    ) as bot:
+        bot.authorization_url = oauth_authority.authorization_url
         yield bot

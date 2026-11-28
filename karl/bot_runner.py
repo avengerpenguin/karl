@@ -3,19 +3,15 @@ import hashlib
 import json
 import logging
 import re
-from types import CoroutineType
-from typing import Callable, Any
 
 from langchain_core.language_models.chat_model_stream import AsyncChatModelStream
 from langchain_core.messages import (
     HumanMessage,
     AIMessage,
 )
-from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt._tool_call_stream import ToolCallStream
 from langgraph.stream import AsyncGraphRunStream, StreamChannel
-from langgraph.types import Command, StateT, OutputT
-from langgraph.typing import ContextT, InputT
+from langgraph.types import Command
 from typing_extensions import override
 
 try:
@@ -24,6 +20,8 @@ except ImportError:
     raise ImportError("Please install karl[matrix] to use Matrix")
 
 from .bot import PersonalBot
+from .oauth import redirect_presenter
+from .types import AgentFactory, AgentSessionContext, Elicitor
 from markdown_it import MarkdownIt
 
 
@@ -334,15 +332,37 @@ def _split_matrix_notice(text: str) -> list[str]:
     ]
 
 
+class _MatrixThreadElicitor(Elicitor):
+    def __init__(
+        self,
+        bot: "KarlBot",
+        room_id: str,
+        thread_root_event_id: str,
+        reply_to_event_id: str,
+    ):
+        self._bot = bot
+        self._room_id = room_id
+        self._thread_root_event_id = thread_root_event_id
+        self._reply_to_event_id = reply_to_event_id
+
+    async def request_url(self, *, message: str, url: str) -> str:
+        event_id = await self._bot._send_notice(
+            self._room_id,
+            f"{message}\n\n{url}",
+            thread_root_event_id=self._thread_root_event_id,
+            reply_to_event_id=self._reply_to_event_id,
+        )
+        return event_id or f"matrix-elicitation:{self._thread_root_event_id}"
+
+    async def complete(self, elicitation_id: str) -> None:
+        # Matrix currently has no elicitation lifecycle event to update.
+        return None
+
+
 class KarlBot(PersonalBot):
     def __init__(
         self,
-        agent_factory: Callable[
-            [],
-            CoroutineType[
-                Any, Any, CompiledStateGraph[StateT, ContextT, InputT, OutputT]
-            ],
-        ],
+        agent_factory: AgentFactory,
         *args,
         **kwargs,
     ):
@@ -474,10 +494,25 @@ class KarlBot(PersonalBot):
 
     @override
     async def generate_reply(self, room: MatrixRoom, event: RoomMessageText) -> None:
-        agent = await self.agent_factory()
-
         thread_root_event_id = _get_thread_root_event_id(event)
         agent_thread_id = _agent_thread_id(room.room_id, thread_root_event_id)
+        session = AgentSessionContext(
+            session_id=agent_thread_id,
+            elicitor=_MatrixThreadElicitor(
+                self,
+                room.room_id,
+                thread_root_event_id,
+                event.event_id,
+            ),
+        )
+        agent = await self.agent_factory(session)
+
+        async def present_oauth_url(url: str) -> None:
+            await session.elicitor.request_url(
+                message="Sign in to continue",
+                url=url,
+            )
+
         agent_config = {
             "configurable": {
                 "thread_id": agent_thread_id,
@@ -527,205 +562,208 @@ class KarlBot(PersonalBot):
         interrupt_was_reported = False
         consumer_tasks: set[asyncio.Task] = set()
 
-        try:
-            stream: AsyncGraphRunStream = await agent.astream_events(
-                agent_input,
-                version="v3",
-                config=agent_config,
-            )
+        async with redirect_presenter(present_oauth_url):
+            try:
+                stream: AsyncGraphRunStream = await agent.astream_events(
+                    agent_input,
+                    version="v3",
+                    config=agent_config,
+                )
 
-            async def consume_messages() -> None:
-                messages_out: StreamChannel = stream.messages
-                async for message in messages_out:
-                    message: AsyncChatModelStream
+                async def consume_messages() -> None:
+                    messages_out: StreamChannel = stream.messages
+                    async for message in messages_out:
+                        message: AsyncChatModelStream
 
-                    async def consume_reasoning() -> None:
-                        reasoning = ""
-                        reasoning_event_id: str | None = None
-                        last_edit_at = 0.0
-                        min_edit_interval_seconds = 5.0
+                        async def consume_reasoning() -> None:
+                            reasoning = ""
+                            reasoning_event_id: str | None = None
+                            last_edit_at = 0.0
+                            min_edit_interval_seconds = 5.0
 
-                        async for delta in message.reasoning:
-                            if not delta:
-                                continue
+                            async for delta in message.reasoning:
+                                if not delta:
+                                    continue
 
-                            reasoning += delta
+                                reasoning += delta
 
-                            if not reasoning.strip():
-                                continue
+                                if not reasoning.strip():
+                                    continue
 
-                            now = asyncio.get_running_loop().time()
-                            preview_text = f"[thinking] {reasoning.strip()} ▌"
+                                now = asyncio.get_running_loop().time()
+                                preview_text = f"[thinking] {reasoning.strip()} ▌"
 
-                            if reasoning_event_id is None:
-                                reasoning_event_id = await self._send_notice(
-                                    room.room_id,
-                                    preview_text,
-                                    thread_root_event_id=thread_root_event_id,
-                                    reply_to_event_id=event.event_id,
-                                )
-                                last_edit_at = now
-                            elif now - last_edit_at >= min_edit_interval_seconds:
+                                if reasoning_event_id is None:
+                                    reasoning_event_id = await self._send_notice(
+                                        room.room_id,
+                                        preview_text,
+                                        thread_root_event_id=thread_root_event_id,
+                                        reply_to_event_id=event.event_id,
+                                    )
+                                    last_edit_at = now
+                                elif now - last_edit_at >= min_edit_interval_seconds:
+                                    await self._edit_notice(
+                                        room.room_id,
+                                        reasoning_event_id,
+                                        preview_text,
+                                    )
+                                    last_edit_at = now
+
+                            final_reasoning = reasoning.strip()
+                            if final_reasoning and reasoning_event_id is not None:
                                 await self._edit_notice(
                                     room.room_id,
                                     reasoning_event_id,
-                                    preview_text,
+                                    f"[thinking] {final_reasoning}",
                                 )
-                                last_edit_at = now
 
-                        final_reasoning = reasoning.strip()
-                        if final_reasoning and reasoning_event_id is not None:
-                            await self._edit_notice(
+                        async def consume_text() -> tuple[str, str | None]:
+                            text = ""
+                            message_event_id: str | None = None
+                            last_edit_at = 0.0
+                            min_edit_interval_seconds = 5.0
+
+                            async for delta in message.text:
+                                if not delta:
+                                    continue
+
+                                text += delta
+
+                                if not text.strip():
+                                    continue
+
+                                now = asyncio.get_running_loop().time()
+                                preview_text = text.strip() + " ▌"
+
+                                if message_event_id is None:
+                                    message_event_id = await self._send_text_message(
+                                        room.room_id,
+                                        preview_text,
+                                        thread_root_event_id=thread_root_event_id,
+                                        reply_to_event_id=event.event_id,
+                                    )
+                                    last_edit_at = now
+                                elif now - last_edit_at >= min_edit_interval_seconds:
+                                    await self._edit_text_message(
+                                        room.room_id,
+                                        message_event_id,
+                                        preview_text,
+                                    )
+                                    last_edit_at = now
+
+                            return text, message_event_id
+
+                        reasoning_task = asyncio.create_task(consume_reasoning())
+                        text_task = asyncio.create_task(consume_text())
+
+                        _, text_result = await asyncio.gather(
+                            reasoning_task,
+                            text_task,
+                        )
+                        text, message_event_id = text_result
+
+                        full_message: AIMessage = await message.output
+                        final_text = (full_message.text or text).strip()
+                        if not final_text:
+                            continue
+
+                        usage = full_message.usage_metadata
+                        if usage:
+                            model_name = (full_message.response_metadata or {}).get(
+                                "model_name"
+                            )
+                            model_prefix = (
+                                f"model: {model_name} — " if model_name else ""
+                            )
+                            await self._send_notice(
                                 room.room_id,
-                                reasoning_event_id,
-                                f"[thinking] {final_reasoning}",
+                                f"{model_prefix}tokens — in: {usage.get('input_tokens')}, "
+                                f"out: {usage.get('output_tokens')}, "
+                                f"total: {usage.get('total_tokens')}",
+                                thread_root_event_id=thread_root_event_id,
+                                reply_to_event_id=event.event_id,
                             )
 
-                    async def consume_text() -> tuple[str, str | None]:
-                        text = ""
-                        message_event_id: str | None = None
-                        last_edit_at = 0.0
-                        min_edit_interval_seconds = 5.0
+                        if message_event_id is None:
+                            await self._send_text_message(
+                                room.room_id,
+                                final_text,
+                                thread_root_event_id=thread_root_event_id,
+                                reply_to_event_id=event.event_id,
+                            )
+                        else:
+                            await self._edit_text_message(
+                                room.room_id,
+                                message_event_id,
+                                final_text,
+                            )
 
-                        async for delta in message.text:
-                            if not delta:
-                                continue
-
-                            text += delta
-
-                            if not text.strip():
-                                continue
-
-                            now = asyncio.get_running_loop().time()
-                            preview_text = text.strip() + " ▌"
-
-                            if message_event_id is None:
-                                message_event_id = await self._send_text_message(
-                                    room.room_id,
-                                    preview_text,
-                                    thread_root_event_id=thread_root_event_id,
-                                    reply_to_event_id=event.event_id,
-                                )
-                                last_edit_at = now
-                            elif now - last_edit_at >= min_edit_interval_seconds:
-                                await self._edit_text_message(
-                                    room.room_id,
-                                    message_event_id,
-                                    preview_text,
-                                )
-                                last_edit_at = now
-
-                        return text, message_event_id
-
-                    reasoning_task = asyncio.create_task(consume_reasoning())
-                    text_task = asyncio.create_task(consume_text())
-
-                    _, text_result = await asyncio.gather(
-                        reasoning_task,
-                        text_task,
-                    )
-                    text, message_event_id = text_result
-
-                    full_message: AIMessage = await message.output
-                    final_text = (full_message.text or text).strip()
-                    if not final_text:
-                        continue
-
-                    usage = full_message.usage_metadata
-                    if usage:
-                        model_name = (full_message.response_metadata or {}).get(
-                            "model_name"
+                async def consume_tool_calls() -> None:
+                    tool_calls: StreamChannel = stream.tool_calls
+                    async for call in tool_calls:
+                        call: ToolCallStream
+                        tool_name = call.tool_name
+                        tool_args = call.input
+                        tool_args_snip = (
+                            str(tool_args)[:200]
+                            if len(str(tool_args)) > 200
+                            else str(tool_args)
                         )
-                        model_prefix = f"model: {model_name} — " if model_name else ""
+
                         await self._send_notice(
                             room.room_id,
-                            f"{model_prefix}tokens — in: {usage.get('input_tokens')}, "
-                            f"out: {usage.get('output_tokens')}, "
-                            f"total: {usage.get('total_tokens')}",
+                            f"Calling tool `{tool_name}` with input `{tool_args_snip}`",
                             thread_root_event_id=thread_root_event_id,
                             reply_to_event_id=event.event_id,
                         )
 
-                    if message_event_id is None:
-                        await self._send_text_message(
+                async def consume_interrupts() -> None:
+                    nonlocal interrupt_was_reported
+
+                    for interrupt in await stream.interrupts():
+                        interrupt_was_reported = True
+                        await self._send_notice(
                             room.room_id,
-                            final_text,
+                            _format_interrupt(interrupt),
                             thread_root_event_id=thread_root_event_id,
                             reply_to_event_id=event.event_id,
                         )
-                    else:
-                        await self._edit_text_message(
-                            room.room_id,
-                            message_event_id,
-                            final_text,
-                        )
+                        return
 
-            async def consume_tool_calls() -> None:
-                tool_calls: StreamChannel = stream.tool_calls
-                async for call in tool_calls:
-                    call: ToolCallStream
-                    tool_name = call.tool_name
-                    tool_args = call.input
-                    tool_args_snip = (
-                        str(tool_args)[:200]
-                        if len(str(tool_args)) > 200
-                        else str(tool_args)
+                consumer_tasks = {
+                    asyncio.create_task(consume_messages()),
+                    asyncio.create_task(consume_tool_calls()),
+                    asyncio.create_task(consume_interrupts()),
+                }
+
+                while consumer_tasks:
+                    done, consumer_tasks = await asyncio.wait(
+                        consumer_tasks,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
 
-                    await self._send_notice(
-                        room.room_id,
-                        f"Calling tool `{tool_name}` with input `{tool_args_snip}`",
-                        thread_root_event_id=thread_root_event_id,
-                        reply_to_event_id=event.event_id,
-                    )
+                    await asyncio.gather(*done)
 
-            async def consume_interrupts() -> None:
-                nonlocal interrupt_was_reported
+                    if interrupt_was_reported:
+                        for task in consumer_tasks:
+                            task.cancel()
 
-                for interrupt in await stream.interrupts():
-                    interrupt_was_reported = True
-                    await self._send_notice(
-                        room.room_id,
-                        _format_interrupt(interrupt),
-                        thread_root_event_id=thread_root_event_id,
-                        reply_to_event_id=event.event_id,
-                    )
-                    return
+                        await asyncio.gather(*consumer_tasks, return_exceptions=True)
+                        break
 
-            consumer_tasks = {
-                asyncio.create_task(consume_messages()),
-                asyncio.create_task(consume_tool_calls()),
-                asyncio.create_task(consume_interrupts()),
-            }
+            except Exception:
+                for task in consumer_tasks:
+                    task.cancel()
 
-            while consumer_tasks:
-                done, consumer_tasks = await asyncio.wait(
-                    consumer_tasks,
-                    return_when=asyncio.FIRST_COMPLETED,
+                await asyncio.gather(*consumer_tasks, return_exceptions=True)
+                logger.exception("Failed to generate reply")
+                await self._send_text_message(
+                    room.room_id,
+                    "Sorry, something went wrong.",
+                    thread_root_event_id=thread_root_event_id,
+                    reply_to_event_id=event.event_id,
                 )
-
-                await asyncio.gather(*done)
-
-                if interrupt_was_reported:
-                    for task in consumer_tasks:
-                        task.cancel()
-
-                    await asyncio.gather(*consumer_tasks, return_exceptions=True)
-                    break
-
-        except Exception:
-            for task in consumer_tasks:
-                task.cancel()
-
-            await asyncio.gather(*consumer_tasks, return_exceptions=True)
-            logger.exception("Failed to generate reply")
-            await self._send_text_message(
-                room.room_id,
-                "Sorry, something went wrong.",
-                thread_root_event_id=thread_root_event_id,
-                reply_to_event_id=event.event_id,
-            )
-            reaction = "❌"
-        finally:
-            await self.client.room_typing(room.room_id, False)
-            await self._react_to_event(room.room_id, event.event_id, reaction)
+                reaction = "❌"
+            finally:
+                await self.client.room_typing(room.room_id, False)
+                await self._react_to_event(room.room_id, event.event_id, reaction)

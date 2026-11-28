@@ -1,6 +1,6 @@
 import asyncio
 import os
-from functools import wraps, partial
+from functools import wraps
 
 import requests
 import typer
@@ -60,8 +60,12 @@ async def bot(model: str = DEFAULT_MODEL):
 
     avatar_url = "https://static.wikia.nocookie.net/simpsons/images/1/18/Karl2.png/revision/latest"
     avatar_bytes = requests.get(avatar_url).content
+
+    async def agent_factory(_session):
+        return await create_general_agent(model)
+
     await KarlBot(
-        partial(create_general_agent, model),
+        agent_factory,
         os.getenv("MATRIX_HOMESERVER"),
         os.getenv("BOT_USER_ID"),
         "karl",

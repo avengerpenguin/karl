@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
@@ -98,11 +100,33 @@ def oauth_redirect_uri(port: int, path: str = "/callback") -> str:
     return f"http://{_oauth_callback_public_host()}:{port}{path}"
 
 
-async def handle_redirect(auth_url: str) -> None:
+RedirectPresenter = Callable[[str], Awaitable[None]]
+
+
+async def _default_redirect_presenter(auth_url: str) -> None:
     print(f"Visit: {auth_url}")
 
     if not in_container():
         os.system(f"open '{auth_url}'")
+
+
+_redirect_presenter: ContextVar[RedirectPresenter] = ContextVar(
+    "oauth_redirect_presenter", default=_default_redirect_presenter
+)
+
+
+@asynccontextmanager
+async def redirect_presenter(presenter):
+    """Temporarily redirect OAuth links to a context-local presenter."""
+    token = _redirect_presenter.set(presenter)
+    try:
+        yield
+    finally:
+        _redirect_presenter.reset(token)
+
+
+async def handle_redirect(auth_url: str) -> None:
+    await _redirect_presenter.get()(auth_url)
 
 
 class OAuthCallbackResult(NamedTuple):

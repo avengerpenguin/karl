@@ -4,6 +4,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 
 import pytest_asyncio
 from langchain.agents import create_agent
@@ -36,6 +37,7 @@ class MatrixWorld:
         self._users: list[MatrixUser] = []
         self._rooms: dict[frozenset[str], str] = {}
         self._bots: list[KarlHarness] = []
+        self._url_visitors: dict[str, Callable[[], Awaitable[None]]] = {}
 
     async def __aenter__(self):
         return self
@@ -62,6 +64,7 @@ class MatrixWorld:
         require_approval=None,
         error=False,
         model_name: str | None = None,
+        agent_factory: Callable[[object], Awaitable[object]] | None = None,
     ) -> "KarlHarness":
         bot = KarlHarness(
             self,
@@ -70,9 +73,26 @@ class MatrixWorld:
             require_approval=require_approval,
             error=error,
             model_name=model_name,
+            agent_factory=agent_factory,
         )
         self._bots.append(bot)
         return bot
+
+    def register_url_visitor(
+        self,
+        url: str,
+        visitor: Callable[[], Awaitable[None]],
+    ) -> None:
+        self._url_visitors[url] = visitor
+
+    async def visit_url(self, url: str) -> None:
+        try:
+            visitor = self._url_visitors[url]
+        except KeyError as error:
+            raise ValueError(
+                f"No authorization flow is registered for {url}"
+            ) from error
+        await visitor()
 
     async def close(self) -> None:
         for bot in reversed(self._bots):
@@ -160,6 +180,9 @@ class MatrixUser:
             thread_root_event_id=message.thread_root_event_id,
             since=since,
         )
+
+    async def visit(self, url: str) -> None:
+        await self.world.visit_url(url)
 
     def __repr__(self) -> str:
         return f"MatrixUser(name={self.name!r}, user_id={self.user_id!r})"
@@ -303,11 +326,13 @@ class KarlHarness(MatrixUser):
         require_approval=None,
         error=False,
         model_name: str | None = None,
+        agent_factory: Callable[[object], Awaitable[object]] | None = None,
     ):
         self.world = world
         self.owner = owner
         self.error = error
         self.model_name = model_name
+        self.agent_factory = agent_factory
         self.tools = tools or []
         self.require_approval = require_approval or []
         self.name = "karl"
@@ -391,13 +416,15 @@ class KarlHarness(MatrixUser):
             else []
         )
 
-        async def agent_factory():
+        async def default_agent_factory(_session):
             return create_agent(
                 model=model,
                 tools=self.tools,
                 middleware=middleware,
                 checkpointer=checkpointer,
             )
+
+        agent_factory = self.agent_factory or default_agent_factory
 
         bot_module.BOT_PASSWORD = _TEST_PASSWORD
         localpart = self.user_id.split(":", 1)[0]

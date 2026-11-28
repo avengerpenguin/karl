@@ -1,6 +1,7 @@
-from pathlib import Path
-
+import asyncio
 import json
+import uuid
+from pathlib import Path
 import socket
 from functools import cache
 from json import JSONDecodeError
@@ -14,6 +15,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import StructuredTool, BaseTool
 from langchain_openai import ChatOpenAI
 from vcr import VCR
+
+from karl.oauth import handle_redirect, redirect_presenter
+from karl.types import Elicitor
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 DOCKERHUB_HOSTS = {
@@ -220,6 +224,39 @@ def chat_model(request: pytest.FixtureRequest) -> BaseChatModel:
     return llm
 
 
+class OAuthAuthority:
+    """Test double for an OAuth provider that waits for an explicit browser visit."""
+
+    def __init__(self, matrix) -> None:
+        self.authorization_url = f"https://authorization.test/sign-in/{uuid.uuid4()}"
+        self._authorized = asyncio.Event()
+        matrix.register_url_visitor(self.authorization_url, self.authorize)
+
+    async def authorize(self) -> None:
+        self._authorized.set()
+
+    async def require_authorization(self, elicitor: Elicitor) -> None:
+        elicitation_id: str | None = None
+
+        async def present(auth_url: str) -> None:
+            nonlocal elicitation_id
+            elicitation_id = await elicitor.request_url(
+                message="Sign in to continue",
+                url=auth_url,
+            )
+
+        async with redirect_presenter(present):
+            await handle_redirect(self.authorization_url)
+        await self._authorized.wait()
+        if elicitation_id is not None:
+            await elicitor.complete(elicitation_id)
+
+
+@pytest.fixture
+def oauth_authority(matrix) -> OAuthAuthority:
+    return OAuthAuthority(matrix)
+
+
 @pytest.fixture
 def get_weather() -> BaseTool:
     def f(location: str):
@@ -236,3 +273,12 @@ def get_time() -> BaseTool:
         return "12:00"
 
     return StructuredTool.from_function(f, name="get_time")
+
+
+@pytest.fixture
+def get_calendar() -> BaseTool:
+    def f():
+        """Get today's calendar."""
+        return "You have no meetings today."
+
+    return StructuredTool.from_function(f, name="get_calendar")
