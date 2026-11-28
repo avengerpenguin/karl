@@ -137,8 +137,6 @@ async def create(model: BaseChatModel | str):
             fetch_email,
             archive_email,
             cv.fetch_cv,
-            # list_todoist_projects,
-            # list_todoist_tasks,
             find_latest_non_replied_chat,
             find_past_reply_examples,
             cv.fetch_cv,
