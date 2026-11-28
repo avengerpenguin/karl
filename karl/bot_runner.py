@@ -505,7 +505,6 @@ class KarlBot(PersonalBot):
                 event.event_id,
             ),
         )
-        agent = await self.agent_factory(session)
 
         async def present_oauth_url(url: str) -> None:
             await session.elicitor.request_url(
@@ -513,56 +512,58 @@ class KarlBot(PersonalBot):
                 url=url,
             )
 
-        agent_config = {
-            "configurable": {
-                "thread_id": agent_thread_id,
-                "matrix_room_id": room.room_id,
-                "matrix_thread_root_event_id": thread_root_event_id,
-                "profile_override": {
-                    "max_input_tokens": 1000000  # Sets the trigger to ~850k tokens
+        async with redirect_presenter(present_oauth_url):
+            agent = await self.agent_factory(session)
+
+            agent_config = {
+                "configurable": {
+                    "thread_id": agent_thread_id,
+                    "matrix_room_id": room.room_id,
+                    "matrix_thread_root_event_id": thread_root_event_id,
+                    "profile_override": {
+                        "max_input_tokens": 1000000  # Sets the trigger to ~850k tokens
+                    },
                 },
-            },
-            # "callbacks": [ConsoleTraceHandler()],
-            "tags": ["matrix", "karlbot"],
-            "metadata": {
-                "room_id": room.room_id,
-                "thread_root_event_id": thread_root_event_id,
-            },
-        }
+                # "callbacks": [ConsoleTraceHandler()],
+                "tags": ["matrix", "karlbot"],
+                "metadata": {
+                    "room_id": room.room_id,
+                    "thread_root_event_id": thread_root_event_id,
+                },
+            }
 
-        review_decision = _human_review_decision(event.body)
-        resume_command: Command | None = None
+            review_decision = _human_review_decision(event.body)
+            resume_command: Command | None = None
 
-        if review_decision is not None:
-            decision_type, message = review_decision
-            state = await agent.aget_state(agent_config)
-            decision_count = _pending_human_decision_count(state)
+            if review_decision is not None:
+                decision_type, message = review_decision
+                state = await agent.aget_state(agent_config)
+                decision_count = _pending_human_decision_count(state)
 
-            resume_command = _human_review_resume_command(
-                decision_type=decision_type,
-                message=message,
-                decision_count=decision_count,
+                resume_command = _human_review_resume_command(
+                    decision_type=decision_type,
+                    message=message,
+                    decision_count=decision_count,
+                )
+
+            agent_input = (
+                resume_command
+                if resume_command is not None
+                else {"messages": [HumanMessage(content=event.body)]}
             )
 
-        agent_input = (
-            resume_command
-            if resume_command is not None
-            else {"messages": [HumanMessage(content=event.body)]}
-        )
+            await self.client.room_typing(room.room_id, True)
+            await self._send_notice(
+                room.room_id,
+                "Resuming…" if resume_command is not None else "Thinking…",
+                thread_root_event_id=thread_root_event_id,
+                reply_to_event_id=event.event_id,
+            )
 
-        await self.client.room_typing(room.room_id, True)
-        await self._send_notice(
-            room.room_id,
-            "Resuming…" if resume_command is not None else "Thinking…",
-            thread_root_event_id=thread_root_event_id,
-            reply_to_event_id=event.event_id,
-        )
+            reaction = "✅"
+            interrupt_was_reported = False
+            consumer_tasks: set[asyncio.Task] = set()
 
-        reaction = "✅"
-        interrupt_was_reported = False
-        consumer_tasks: set[asyncio.Task] = set()
-
-        async with redirect_presenter(present_oauth_url):
             try:
                 stream: AsyncGraphRunStream = await agent.astream_events(
                     agent_input,

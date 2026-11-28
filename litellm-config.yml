@@ -33,6 +33,7 @@ model_list:
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
+        return_raw_model_name: true
         tiers:
           SIMPLE: gpt-5.6-luna
           MEDIUM: gpt-5.6-terra
@@ -58,6 +59,7 @@ model_list:
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
+        return_raw_model_name: true
         tiers:
           SIMPLE: qwen-local
           MEDIUM: gpt-5.6-luna
@@ -87,6 +89,7 @@ model_list:
     litellm_params:
       model: auto_router/complexity_router
       complexity_router_config:
+        return_raw_model_name: true
         tiers:
           SIMPLE: qwen-local
           MEDIUM: claude-auto

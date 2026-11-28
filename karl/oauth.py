@@ -103,15 +103,8 @@ def oauth_redirect_uri(port: int, path: str = "/callback") -> str:
 RedirectPresenter = Callable[[str], Awaitable[None]]
 
 
-async def _default_redirect_presenter(auth_url: str) -> None:
-    print(f"Visit: {auth_url}")
-
-    if not in_container():
-        os.system(f"open '{auth_url}'")
-
-
-_redirect_presenter: ContextVar[RedirectPresenter] = ContextVar(
-    "oauth_redirect_presenter", default=_default_redirect_presenter
+_redirect_presenter: ContextVar[RedirectPresenter | None] = ContextVar(
+    "oauth_redirect_presenter", default=None
 )
 
 
@@ -126,7 +119,12 @@ async def redirect_presenter(presenter):
 
 
 async def handle_redirect(auth_url: str) -> None:
-    await _redirect_presenter.get()(auth_url)
+    presenter = _redirect_presenter.get()
+    if presenter is None:
+        raise RuntimeError(
+            "OAuth URL presentation requires an installed redirect presenter."
+        )
+    await presenter(auth_url)
 
 
 class OAuthCallbackResult(NamedTuple):
